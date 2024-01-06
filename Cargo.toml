@@ -1,0 +1,23 @@
+[package]
+name = "erasure-coding"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+
+[patch.crates-io]
+scale-info = { git = "https://github.com/arkpar/scale-info.git" }
+
+[dependencies]
+blake3 = "1.5.0"
+bounded-collections = { version = "0.1.9", default-features = false }
+novelpoly = { package = "reed-solomon-novelpoly", git = "https://github.com/paritytech/reed-solomon-novelpoly.git", default-features = false }
+scale = { package = "parity-scale-codec", version = "3.6.9", default-features = false,  features = ["derive"] }
+thiserror = "1.0.56"
+
+[dev-dependencies]
+criterion = { version = "0.4.0", default-features = false, features = ["cargo_bench_support"] }
+quickcheck = { version = "1.0.3", default-features = false }
+
+[[bench]]
+name = "all"
+harness = false
