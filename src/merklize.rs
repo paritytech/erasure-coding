@@ -4,6 +4,21 @@ use crate::{ChunkIndex, ErasureChunk, Error};
 use bounded_collections::{BoundedVec, ConstU32};
 use scale::{Decode, Encode};
 
+use blake3::{hash as hash_fn, Hash as InnerHash, Hasher as InnerHasher};
+
+// Uncomment this to use blake2b instead of blake3.
+//
+// use blake2::{Blake2b, Digest};
+
+// type InnerHash = [u8; 32];
+// type InnerHasher = Blake2b<blake2::digest::consts::U32>;
+
+// fn hash_fn(data: &[u8]) -> InnerHash {
+// 	let mut hasher = InnerHasher::new();
+// 	hasher.update(data);
+// 	hasher.finalize().into()
+// }
+
 // Binary Merkle Tree with 16-bit `ChunkIndex` has depth at most 17.
 // The proof has at most `depth - 1` length.
 const MAX_MERKLE_PROOF_DEPTH: u32 = 16;
@@ -21,8 +36,8 @@ impl From<Hash> for ErasureRoot {
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Encode, Decode, Default)]
 struct Hash([u8; 32]);
 
-impl From<blake3::Hash> for Hash {
-	fn from(hash: blake3::Hash) -> Self {
+impl From<InnerHash> for Hash {
+	fn from(hash: InnerHash) -> Self {
 		Hash(hash.into())
 	}
 }
@@ -110,7 +125,7 @@ impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
 		let mut hashes: Vec<Hash> = chunks
 			.iter()
 			.map(|chunk| {
-				let hash = blake3::hash(chunk);
+				let hash = hash_fn(chunk);
 				Hash::from(hash)
 			})
 			.collect();
@@ -147,12 +162,15 @@ impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
 }
 
 fn combine(left: Hash, right: Hash) -> Hash {
-	let mut hasher = blake3::Hasher::new();
+	let mut hasher = InnerHasher::new();
 
 	hasher.update(left.0.as_slice());
 	hasher.update(right.0.as_slice());
 
-	Hash::from(hasher.finalize())
+	#[allow(clippy::useless_conversion)]
+	let inner_hash: InnerHash = hasher.finalize().into();
+
+	inner_hash.into()
 }
 
 impl ErasureChunk {
@@ -163,7 +181,7 @@ impl ErasureChunk {
 
 	/// Verify the proof of the chunk against the erasure root.
 	pub fn verify_root(&self, root: &ErasureRoot) -> bool {
-		let leaf_hash = Hash::from(blake3::hash(&self.chunk));
+		let leaf_hash = Hash::from(hash_fn(&self.chunk));
 
 		let root_hash =
 			self.proof.0.iter().fold(leaf_hash, |acc, (hash, direction)| match direction {
@@ -201,9 +219,9 @@ mod tests {
 
 		// compute the proof manually
 		let proof_0 = {
-			let a0 = blake3::hash(&chunks[0]).into();
-			let a1 = blake3::hash(&chunks[1]).into();
-			let a2 = blake3::hash(&chunks[2]).into();
+			let a0 = hash_fn(&chunks[0]).into();
+			let a1 = hash_fn(&chunks[1]).into();
+			let a2 = hash_fn(&chunks[2]).into();
 			let a3 = Hash::default();
 
 			let b0 = combine(a0, a1);
