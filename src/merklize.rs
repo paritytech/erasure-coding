@@ -6,6 +6,19 @@ use scale::{Decode, Encode};
 
 use blake3::{hash as hash_fn, Hash as InnerHash, Hasher as InnerHasher};
 
+// Uncomment this to use blake2b instead of blake3.
+//
+// use blake2::{Blake2b, Digest};
+
+// type InnerHash = [u8; 32];
+// type InnerHasher = Blake2b<blake2::digest::consts::U32>;
+
+// fn hash_fn(data: &[u8]) -> InnerHash {
+// 	let mut hasher = InnerHasher::new();
+// 	hasher.update(data);
+// 	hasher.finalize().into()
+// }
+
 // Binary Merkle Tree with 16-bit `ChunkIndex` has depth at most 17.
 // The proof has at most `depth - 1` length.
 const MAX_MERKLE_PROOF_DEPTH: u32 = 16;
@@ -154,7 +167,10 @@ fn combine(left: Hash, right: Hash) -> Hash {
 	hasher.update(left.0.as_slice());
 	hasher.update(right.0.as_slice());
 
-	Hash::from(hasher.finalize())
+	#[allow(clippy::useless_conversion)]
+	let inner_hash: InnerHash = hasher.finalize().into();
+
+	inner_hash.into()
 }
 
 impl ErasureChunk {
