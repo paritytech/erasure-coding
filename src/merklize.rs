@@ -5,7 +5,7 @@ use bounded_collections::{BoundedVec, ConstU32};
 use scale::{Decode, Encode};
 
 // Binary Merkle Tree with 16-bit `ChunkIndex` has depth at most 17.
-// In practice, `ChunkIndex` size will be smaller than 15 bits.
+// The proof has at most `depth - 1` length.
 const MAX_MERKLE_PROOF_DEPTH: u32 = 16;
 
 /// The root of the erasure chunks that can be used to verify chunk proofs.
@@ -35,7 +35,7 @@ impl TryFrom<MerklePath> for Proof {
 	type Error = Error;
 
 	fn try_from(input: MerklePath) -> Result<Self, Self::Error> {
-		Ok(Proof(BoundedVec::try_from(input).map_err(|_| Error::InvalidChunkProof)?))
+		Ok(Proof(BoundedVec::try_from(input).map_err(|_| Error::TooLargeProof)?))
 	}
 }
 
@@ -100,6 +100,9 @@ impl Iterator for ErasureRootAndProofs {
 	}
 }
 
+/// # Panics
+///
+/// If `chunks` is empty.
 impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
 	fn from(chunks: Vec<Vec<u8>>) -> Self {
 		assert!(!chunks.is_empty(), "must have at least one chunk");
@@ -174,7 +177,7 @@ impl ErasureChunk {
 	/// Verify the index of the chunk against the proof.
 	/// This check is relatively cheap.
 	pub fn verify_index(&self) -> bool {
-		let (index, _) =
+		let (index, _tree_depth) =
 			self.proof.0.iter().fold((0u16, 0), |acc, (_, direction)| match direction {
 				Direction::Left => (acc.0 | (1 << acc.1), acc.1 + 1),
 				Direction::Right => (acc.0, acc.1 + 1),
