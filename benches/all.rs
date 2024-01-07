@@ -15,7 +15,7 @@ fn bench_all(c: &mut Criterion) {
 	const N_CHUNKS: u16 = 1023;
 	const KB: usize = 1024;
 	const MB: usize = 1024 * KB;
-	const POV_SIZES: [usize; 3] = [128 * KB, 1 * MB, 5 * MB];
+	const POV_SIZES: [usize; 3] = [128 * KB, MB, 5 * MB];
 
 	let mut group = c.benchmark_group("construct");
 	for pov_size in POV_SIZES {

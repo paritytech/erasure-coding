@@ -110,7 +110,7 @@ pub fn reconstruct_from_systematic<T: Decode>(
 			.collect(),
 	)?;
 
-	Decode::decode(&mut &bytes[..]).map_err(|err| Error::Decode(err))
+	Decode::decode(&mut &bytes[..]).map_err(Error::Decode)
 }
 
 /// Construct erasure-coded chunks.
@@ -161,7 +161,7 @@ where
 
 	let payload_bytes = params.make_encoder().reconstruct(received_shards)?;
 
-	Decode::decode(&mut &payload_bytes[..]).map_err(|err| Error::Decode(err))
+	Decode::decode(&mut &payload_bytes[..]).map_err(Error::Decode)
 }
 
 #[cfg(test)]

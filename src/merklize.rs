@@ -128,7 +128,7 @@ impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
 
 				let hash = combine(prev[2 * i], prev[2 * i + 1]);
 
-				tree[lvl][i] = Hash::from(hash);
+				tree[lvl][i] = hash;
 			});
 		});
 
