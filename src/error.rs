@@ -9,12 +9,8 @@ pub enum Error {
 	TooManyTotalChunks,
 	#[error("Expected at least 2 chunks")]
 	NotEnoughTotalChunks,
-	#[error("Chunk count mismatches between encoding and decoding")]
-	WrongChunkCount,
 	#[error("Not enough chunks to reconstruct message")]
 	NotEnoughChunks,
-	#[error("Too many chunks present")]
-	TooManyChunks,
 	#[error("Chunks are not uniform, mismatch in length or are zero sized")]
 	NonUniformChunks,
 	#[error("Uneven length is not valid for field GF(2^16)")]
@@ -29,8 +25,6 @@ pub enum Error {
 	InvalidChunkProof,
 	#[error("The proof is too large")]
 	TooLargeProof,
-	#[error("The proof is out of bounds")]
-	ProofOutOfBounds,
 	#[error("An unknown error has appeared when reconstructing erasure code chunks")]
 	UnknownReconstruction,
 	#[error("An unknown error has appeared when deriving code parameters from validator count")]
