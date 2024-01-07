@@ -51,7 +51,6 @@ jobs:
           toolchain: stable
           profile: minimal
           components: clippy
-      - run: bash scripts/detect-or-install-riscv-toolchain.sh
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
