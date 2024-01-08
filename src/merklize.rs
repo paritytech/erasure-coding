@@ -115,13 +115,8 @@ impl Iterator for ErasureRootAndProofs {
 	}
 }
 
-/// # Panics
-///
-/// If `chunks` is empty.
 impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
 	fn from(chunks: Vec<Vec<u8>>) -> Self {
-		assert!(!chunks.is_empty(), "must have at least one chunk");
-
 		let mut hashes: Vec<Hash> = chunks
 			.iter()
 			.map(|chunk| {
@@ -208,6 +203,16 @@ impl ErasureChunk {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn zero_chunks_works() {
+		let chunks = vec![];
+		let iter = ErasureRootAndProofs::from(chunks.clone());
+		let root = iter.root();
+		let erasure_chunks: Vec<ErasureChunk> = iter.collect();
+		assert_eq!(erasure_chunks.len(), chunks.len());
+		assert_eq!(root, ErasureRoot(Hash::default()));
+	}
 
 	#[test]
 	fn iter_works() {
