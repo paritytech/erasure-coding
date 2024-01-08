@@ -49,7 +49,10 @@ pub const fn recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
 	if n_chunks as usize > MAX_CHUNKS {
 		return Err(Error::TooManyTotalChunks);
 	}
-	if n_chunks <= 1 {
+	if n_chunks == 1 {
+		return Ok(1)
+	}
+	if n_chunks == 0 {
 		return Err(Error::NotEnoughTotalChunks);
 	}
 
@@ -62,6 +65,9 @@ pub const fn recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
 /// If the regular `recovery_threshold` is a power of two, then it returns the same value.
 /// Otherwise, it returns the next lower power of two.
 pub fn systematic_recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
+	if n_chunks == 1 {
+		return Ok(1)
+	}
 	code_params(n_chunks).map(|params| params.k() as u16)
 }
 
@@ -85,6 +91,10 @@ pub fn reconstruct_from_systematic<T: Decode>(
 	n_chunks: u16,
 	systematic_chunks: Vec<&[u8]>,
 ) -> Result<T, Error> {
+	if n_chunks == 1 {
+		let chunk_data = systematic_chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
+		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+	}
 	let code_params = code_params(n_chunks)?;
 	let k = code_params.k();
 
@@ -115,9 +125,13 @@ pub fn reconstruct_from_systematic<T: Decode>(
 
 /// Construct erasure-coded chunks.
 ///
-/// Works only for 2..65536 chunks.
+/// Works only for 1..65536 chunks.
 /// The data must be non-empty.
 pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8>>, Error> {
+	if n_chunks == 1 {
+		let encoded = data.encode();
+		return Ok(vec![encoded]);
+	}
 	let params = code_params(n_chunks)?;
 	let encoded = data.encode();
 
@@ -139,11 +153,15 @@ pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8
 /// The indices of the present chunks must be indicated. If too few chunks
 /// are provided, recovery is not possible.
 ///
-/// Works only for 2..65536 chunks.
+/// Works only for 1..65536 chunks.
 pub fn reconstruct<'a, I: 'a, T: Decode>(n_chunks: u16, chunks: I) -> Result<T, Error>
 where
 	I: IntoIterator<Item = (&'a [u8], usize)>,
 {
+	if n_chunks == 1 {
+		let (chunk_data, _) = chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
+		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+	}
 	let params = code_params(n_chunks)?;
 	let n = n_chunks as usize;
 	let mut received_shards: Vec<Option<WrappedShard>> = vec![None; n];
@@ -199,7 +217,7 @@ mod tests {
 	#[test]
 	fn round_trip_systematic_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
-			let n_chunks = n_chunks.max(2);
+			let n_chunks = n_chunks.max(1);
 			let threshold = systematic_recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			let reconstructed: Vec<u8> = reconstruct_from_systematic(
@@ -216,7 +234,7 @@ mod tests {
 	#[test]
 	fn round_trip_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
-			let n_chunks = n_chunks.max(2);
+			let n_chunks = n_chunks.max(1);
 			let threshold = recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			// take the last `threshold` chunks
@@ -237,7 +255,7 @@ mod tests {
 	#[test]
 	fn proof_verification_works() {
 		fn property(data: SmallAvailableData, n_chunks: u16) {
-			let n_chunks = n_chunks.max(2).min(2048);
+			let n_chunks = n_chunks.max(1).min(2048);
 			let chunks = construct_chunks(n_chunks, &data.0).unwrap();
 			assert_eq!(chunks.len() as u16, n_chunks);
 

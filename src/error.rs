@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum Error {
 	#[error("There are too many chunks in total")]
 	TooManyTotalChunks,
-	#[error("Expected at least 2 chunks")]
+	#[error("Expected at least 1 chunk")]
 	NotEnoughTotalChunks,
 	#[error("Not enough chunks to reconstruct message")]
 	NotEnoughChunks,
