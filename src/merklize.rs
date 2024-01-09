@@ -24,7 +24,7 @@ use blake3::{hash as hash_fn, Hash as InnerHash, Hasher as InnerHasher};
 const MAX_MERKLE_PROOF_DEPTH: u32 = 16;
 
 /// The root of the erasure chunks that can be used to verify chunk proofs.
-#[derive(PartialEq, Eq, Clone, Debug, Encode, Decode)]
+#[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord, Encode, Decode)]
 pub struct ErasureRoot(Hash);
 
 impl From<Hash> for ErasureRoot {
@@ -33,7 +33,13 @@ impl From<Hash> for ErasureRoot {
 	}
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Encode, Decode, Default)]
+impl From<[u8; 32]> for ErasureRoot {
+	fn from(hash: [u8; 32]) -> Self {
+		ErasureRoot(Hash(hash))
+	}
+}
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, Debug, Encode, Decode, Default)]
 struct Hash([u8; 32]);
 
 impl From<InnerHash> for Hash {
