@@ -7,7 +7,7 @@ mod merklize;
 
 pub use self::{
 	error::Error,
-	merklize::{ErasureRoot, ErasureRootAndProofs, Proof},
+	merklize::{ErasureRoot, MerklizedChunks, Proof},
 };
 
 use novelpoly::{CodeParams, WrappedShard};
@@ -87,13 +87,18 @@ fn code_params(n_chunks: u16) -> Result<CodeParams, Error> {
 ///
 /// Provide a vector containing the first k chunks in order. If too few chunks are provided,
 /// recovery is not possible.
-pub fn reconstruct_from_systematic<T: Decode>(
+///
+/// Due to the internals of the erasure coding algorithm, the output might be
+/// larger than the original data and padded with zeroes; passing `data_len`
+/// allows to truncate the output to the original data size.
+pub fn reconstruct_from_systematic(
 	n_chunks: u16,
-	systematic_chunks: Vec<&[u8]>,
-) -> Result<T, Error> {
+	systematic_chunks: Vec<Vec<u8>>,
+	data_len: usize,
+) -> Result<Vec<u8>, Error> {
 	if n_chunks == 1 {
 		let chunk_data = systematic_chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+		return Ok(chunk_data.to_vec());
 	}
 	let code_params = code_params(n_chunks)?;
 	let k = code_params.k();
@@ -112,36 +117,32 @@ pub fn reconstruct_from_systematic<T: Decode>(
 		return Err(Error::UnevenLength);
 	}
 
-	let bytes = code_params.make_encoder().reconstruct_from_systematic(
-		systematic_chunks
-			.into_iter()
-			.take(k)
-			.map(|data| WrappedShard::new(data.to_vec()))
-			.collect(),
+	let mut bytes = code_params.make_encoder().reconstruct_from_systematic(
+		systematic_chunks.into_iter().take(k).map(WrappedShard::new).collect(),
 	)?;
 
-	Decode::decode(&mut &bytes[..]).map_err(Error::Decode)
+	bytes.truncate(data_len);
+
+	Ok(bytes)
 }
 
 /// Construct erasure-coded chunks.
 ///
 /// Works only for 1..65536 chunks.
 /// The data must be non-empty.
-pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8>>, Error> {
+pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
 	if n_chunks == 1 {
-		let encoded = data.encode();
-		return Ok(vec![encoded]);
+		return Ok(vec![data.to_vec()]);
 	}
 	let params = code_params(n_chunks)?;
-	let encoded = data.encode();
 
-	if encoded.is_empty() {
+	if data.is_empty() {
 		return Err(Error::BadPayload);
 	}
 
 	let shards = params
 		.make_encoder()
-		.encode::<WrappedShard>(&encoded[..])
+		.encode::<WrappedShard>(data)
 		.expect("Payload non-empty, shard sizes are uniform, and validator numbers checked; qed");
 
 	Ok(shards.into_iter().map(|w: WrappedShard| w.into_inner()).collect())
@@ -154,32 +155,38 @@ pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8
 /// are provided, recovery is not possible.
 ///
 /// Works only for 1..65536 chunks.
-pub fn reconstruct<'a, I: 'a, T: Decode>(n_chunks: u16, chunks: I) -> Result<T, Error>
+///
+/// Due to the internals of the erasure coding algorithm, the output might be
+/// larger than the original data and padded with zeroes; passing `data_len`
+/// allows to truncate the output to the original data size.
+pub fn reconstruct<'a, I: 'a>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
 where
-	I: IntoIterator<Item = (&'a [u8], usize)>,
+	I: IntoIterator<Item = (ChunkIndex, Vec<u8>)>,
 {
 	if n_chunks == 1 {
-		let (chunk_data, _) = chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+		let (_, chunk_data) = chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
+		return Ok(chunk_data);
 	}
 	let params = code_params(n_chunks)?;
 	let n = n_chunks as usize;
 	let mut received_shards: Vec<Option<WrappedShard>> = vec![None; n];
-	for (chunk_data, chunk_idx) in chunks.into_iter().take(n) {
+	for (chunk_idx, chunk_data) in chunks.into_iter().take(n) {
 		if chunk_data.len() % 2 != 0 {
 			return Err(Error::UnevenLength);
 		}
 
-		if chunk_idx >= n {
-			return Err(Error::ChunkIndexOutOfBounds { chunk_index: chunk_idx, n_chunks: n });
+		if chunk_idx.0 >= n_chunks {
+			return Err(Error::ChunkIndexOutOfBounds { chunk_index: chunk_idx.0, n_chunks });
 		}
 
-		received_shards[chunk_idx] = Some(WrappedShard::new(chunk_data.to_vec()));
+		received_shards[chunk_idx.0 as usize] = Some(WrappedShard::new(chunk_data));
 	}
 
-	let payload_bytes = params.make_encoder().reconstruct(received_shards)?;
+	let mut payload_bytes = params.make_encoder().reconstruct(received_shards)?;
 
-	Decode::decode(&mut &payload_bytes[..]).map_err(Error::Decode)
+	payload_bytes.truncate(data_len);
+
+	Ok(payload_bytes)
 }
 
 #[cfg(test)]
@@ -219,10 +226,12 @@ mod tests {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
 			let n_chunks = n_chunks.max(1);
 			let threshold = systematic_recovery_threshold(n_chunks).unwrap();
+			let data_len = available_data.0.len();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			let reconstructed: Vec<u8> = reconstruct_from_systematic(
 				n_chunks,
-				chunks.iter().take(threshold as usize).map(|v| &v[..]).collect(),
+				chunks.into_iter().take(threshold as usize).collect(),
+				data_len,
 			)
 			.unwrap();
 			assert_eq!(reconstructed, available_data.0);
@@ -235,17 +244,18 @@ mod tests {
 	fn round_trip_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
 			let n_chunks = n_chunks.max(1);
+			let data_len = available_data.0.len();
 			let threshold = recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			// take the last `threshold` chunks
-			let last_chunks: Vec<(&[u8], usize)> = chunks
-				.iter()
+			let last_chunks: Vec<(ChunkIndex, Vec<u8>)> = chunks
+				.into_iter()
 				.enumerate()
 				.rev()
 				.take(threshold as usize)
-				.map(|(i, v)| (&v[..], i))
+				.map(|(i, v)| (ChunkIndex::from(i as u16), v))
 				.collect();
-			let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks).unwrap();
+			let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data_len).unwrap();
 			assert_eq!(reconstructed, available_data.0);
 		}
 
@@ -259,7 +269,7 @@ mod tests {
 			let chunks = construct_chunks(n_chunks, &data.0).unwrap();
 			assert_eq!(chunks.len() as u16, n_chunks);
 
-			let iter = ErasureRootAndProofs::from(chunks.clone());
+			let iter = MerklizedChunks::from(chunks.clone());
 			let root = iter.root();
 			let erasure_chunks: Vec<_> = iter.collect();
 

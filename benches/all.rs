@@ -2,13 +2,13 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use erasure_coding::*;
 use std::time::Duration;
 
-fn chunks(n_chunks: u16, pov: &Vec<u8>) -> Vec<Vec<u8>> {
+fn chunks(n_chunks: u16, pov: &[u8]) -> Vec<Vec<u8>> {
 	construct_chunks(n_chunks, pov).unwrap()
 }
 
-fn erasure_root(n_chunks: u16, pov: &Vec<u8>) -> ErasureRoot {
+fn erasure_root(n_chunks: u16, pov: &[u8]) -> ErasureRoot {
 	let chunks = chunks(n_chunks, pov);
-	ErasureRootAndProofs::from(chunks).root()
+	MerklizedChunks::from(chunks).root()
 }
 
 fn bench_all(c: &mut Criterion) {
@@ -38,17 +38,17 @@ fn bench_all(c: &mut Criterion) {
 		let all_chunks = chunks(N_CHUNKS, &pov);
 
 		let chunks: Vec<_> = all_chunks
-			.iter()
+			.into_iter()
 			.enumerate()
 			.rev()
 			.take(recovery_threshold(N_CHUNKS).unwrap() as _)
-			.map(|(i, c)| (&c[..], i))
+			.map(|(i, c)| (ChunkIndex::from(i as u16), c))
 			.collect();
 
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, &n| {
 			b.iter(|| {
-				let _pov: Vec<u8> = reconstruct(n, chunks.clone()).unwrap();
+				let _pov: Vec<u8> = reconstruct(n, chunks.clone(), pov.len()).unwrap();
 			});
 		});
 	}
@@ -60,15 +60,15 @@ fn bench_all(c: &mut Criterion) {
 		let all_chunks = chunks(N_CHUNKS, &pov);
 
 		let chunks = all_chunks
-			.iter()
+			.into_iter()
 			.take(systematic_recovery_threshold(N_CHUNKS).unwrap() as _)
-			.map(|c| &c[..])
 			.collect::<Vec<_>>();
 
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, &n| {
 			b.iter(|| {
-				let _pov: Vec<u8> = reconstruct_from_systematic(n, chunks.clone()).unwrap();
+				let _pov: Vec<u8> =
+					reconstruct_from_systematic(n, chunks.clone(), pov.len()).unwrap();
 			});
 		});
 	}
@@ -82,7 +82,7 @@ fn bench_all(c: &mut Criterion) {
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, _| {
 			b.iter(|| {
-				let iter = ErasureRootAndProofs::from(all_chunks.clone());
+				let iter = MerklizedChunks::from(all_chunks.clone());
 				let n = iter.collect::<Vec<_>>().len();
 				assert_eq!(n, all_chunks.len());
 			});
