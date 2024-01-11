@@ -2,11 +2,11 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use erasure_coding::*;
 use std::time::Duration;
 
-fn chunks(n_chunks: u16, pov: &Vec<u8>) -> Vec<Vec<u8>> {
+fn chunks(n_chunks: u16, pov: &[u8]) -> Vec<Vec<u8>> {
 	construct_chunks(n_chunks, pov).unwrap()
 }
 
-fn erasure_root(n_chunks: u16, pov: &Vec<u8>) -> ErasureRoot {
+fn erasure_root(n_chunks: u16, pov: &[u8]) -> ErasureRoot {
 	let chunks = chunks(n_chunks, pov);
 	MerklizedChunks::from(chunks).root()
 }

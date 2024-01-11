@@ -89,7 +89,7 @@ fn code_params(n_chunks: u16) -> Result<CodeParams, Error> {
 /// recovery is not possible.
 ///
 /// Due to the internals of the erasure coding algorithm, the output might be
-/// larger than the original data and padded with zeroes, passing `data_len`
+/// larger than the original data and padded with zeroes; passing `data_len`
 /// allows to truncate the output to the original data size.
 pub fn reconstruct_from_systematic(
 	n_chunks: u16,
@@ -157,7 +157,7 @@ pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Erro
 /// Works only for 1..65536 chunks.
 ///
 /// Due to the internals of the erasure coding algorithm, the output might be
-/// larger than the original data and padded with zeroes, passing `data_len`
+/// larger than the original data and padded with zeroes; passing `data_len`
 /// allows to truncate the output to the original data size.
 pub fn reconstruct<'a, I: 'a>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
 where
