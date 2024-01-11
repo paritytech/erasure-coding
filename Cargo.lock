@@ -511,7 +511,7 @@ dependencies = [
 [[package]]
 name = "reed-solomon-novelpoly"
 version = "1.0.2"
-source = "git+https://github.com/paritytech/reed-solomon-novelpoly.git#be3751093e60adc20c19967f5443158552829011"
+source = "git+https://github.com/paritytech/reed-solomon-novelpoly.git#e6e641e8b97027e691a7d28cc69a23ed2f3a097b"
 dependencies = [
  "derive_more",
  "fs-err",

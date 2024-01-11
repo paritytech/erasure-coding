@@ -15,18 +15,18 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 	let threshold = systematic_recovery_threshold(n_chunks).unwrap();
 	let reconstructed_systematic: Vec<u8> = reconstruct_from_systematic(
 		n_chunks,
-		chunks.iter().take(threshold as usize).map(|v| &v[..]).collect(),
+		chunks.iter().cloned().take(threshold as usize).collect(),
 		data.len(),
 	)
 	.unwrap();
 
 	let threshold = recovery_threshold(n_chunks).unwrap();
-	let last_chunks: Vec<(&[u8], usize)> = chunks
-		.iter()
+	let last_chunks: Vec<(ChunkIndex, Vec<u8>)> = chunks
+		.into_iter()
 		.enumerate()
 		.rev()
 		.take(threshold as usize)
-		.map(|(i, v)| (&v[..], i))
+		.map(|(i, v)| (ChunkIndex::from(i as u16), v))
 		.collect();
 	let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data.len()).unwrap();
 

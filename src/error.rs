@@ -15,7 +15,7 @@ pub enum Error {
 	#[error("Uneven length is not valid for field GF(2^16)")]
 	UnevenLength,
 	#[error("Chunk is out of bounds: {chunk_index} not included in 0..{n_chunks}")]
-	ChunkIndexOutOfBounds { chunk_index: usize, n_chunks: usize },
+	ChunkIndexOutOfBounds { chunk_index: u16, n_chunks: u16 },
 	#[error("Reconstructed payload invalid")]
 	BadPayload,
 	#[error("Invalid chunk proof")]

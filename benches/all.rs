@@ -38,11 +38,11 @@ fn bench_all(c: &mut Criterion) {
 		let all_chunks = chunks(N_CHUNKS, &pov);
 
 		let chunks: Vec<_> = all_chunks
-			.iter()
+			.into_iter()
 			.enumerate()
 			.rev()
 			.take(recovery_threshold(N_CHUNKS).unwrap() as _)
-			.map(|(i, c)| (&c[..], i))
+			.map(|(i, c)| (ChunkIndex::from(i as u16), c))
 			.collect();
 
 		group.throughput(Throughput::Bytes(pov.len() as u64));
@@ -60,9 +60,8 @@ fn bench_all(c: &mut Criterion) {
 		let all_chunks = chunks(N_CHUNKS, &pov);
 
 		let chunks = all_chunks
-			.iter()
+			.into_iter()
 			.take(systematic_recovery_threshold(N_CHUNKS).unwrap() as _)
-			.map(|c| &c[..])
 			.collect::<Vec<_>>();
 
 		group.throughput(Throughput::Bytes(pov.len() as u64));
