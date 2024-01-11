@@ -16,6 +16,7 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 	let reconstructed_systematic: Vec<u8> = reconstruct_from_systematic(
 		n_chunks,
 		chunks.iter().take(threshold as usize).map(|v| &v[..]).collect(),
+		data.len(),
 	)
 	.unwrap();
 
@@ -27,7 +28,7 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 		.take(threshold as usize)
 		.map(|(i, v)| (&v[..], i))
 		.collect();
-	let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks).unwrap();
+	let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data.len()).unwrap();
 
 	assert_eq!(reconstructed, data);
 	assert_eq!(reconstructed_systematic, data);

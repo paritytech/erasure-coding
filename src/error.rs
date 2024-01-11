@@ -1,4 +1,3 @@
-use scale::Error as CodecError;
 use thiserror::Error;
 
 /// Errors in erasure coding.
@@ -19,8 +18,6 @@ pub enum Error {
 	ChunkIndexOutOfBounds { chunk_index: usize, n_chunks: usize },
 	#[error("Reconstructed payload invalid")]
 	BadPayload,
-	#[error("Unable to decode reconstructed payload: {0}")]
-	Decode(CodecError),
 	#[error("Invalid chunk proof")]
 	InvalidChunkProof,
 	#[error("The proof is too large")]

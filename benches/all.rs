@@ -48,7 +48,7 @@ fn bench_all(c: &mut Criterion) {
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, &n| {
 			b.iter(|| {
-				let _pov: Vec<u8> = reconstruct(n, chunks.clone()).unwrap();
+				let _pov: Vec<u8> = reconstruct(n, chunks.clone(), pov.len()).unwrap();
 			});
 		});
 	}
@@ -68,7 +68,8 @@ fn bench_all(c: &mut Criterion) {
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, &n| {
 			b.iter(|| {
-				let _pov: Vec<u8> = reconstruct_from_systematic(n, chunks.clone()).unwrap();
+				let _pov: Vec<u8> =
+					reconstruct_from_systematic(n, chunks.clone(), pov.len()).unwrap();
 			});
 		});
 	}

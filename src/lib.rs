@@ -87,13 +87,18 @@ fn code_params(n_chunks: u16) -> Result<CodeParams, Error> {
 ///
 /// Provide a vector containing the first k chunks in order. If too few chunks are provided,
 /// recovery is not possible.
-pub fn reconstruct_from_systematic<T: Decode>(
+///
+/// Due to the internals of the erasure coding algorithm, the output might be
+/// larger than the original data and padded with zeroes, passing `data_len`
+/// allows to truncate the output to the original data size.
+pub fn reconstruct_from_systematic(
 	n_chunks: u16,
 	systematic_chunks: Vec<&[u8]>,
-) -> Result<T, Error> {
+	data_len: usize,
+) -> Result<Vec<u8>, Error> {
 	if n_chunks == 1 {
 		let chunk_data = systematic_chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+		return Ok(chunk_data.to_vec());
 	}
 	let code_params = code_params(n_chunks)?;
 	let k = code_params.k();
@@ -112,7 +117,7 @@ pub fn reconstruct_from_systematic<T: Decode>(
 		return Err(Error::UnevenLength);
 	}
 
-	let bytes = code_params.make_encoder().reconstruct_from_systematic(
+	let mut bytes = code_params.make_encoder().reconstruct_from_systematic(
 		systematic_chunks
 			.into_iter()
 			.take(k)
@@ -120,28 +125,28 @@ pub fn reconstruct_from_systematic<T: Decode>(
 			.collect(),
 	)?;
 
-	Decode::decode(&mut &bytes[..]).map_err(Error::Decode)
+	bytes.truncate(data_len);
+
+	Ok(bytes)
 }
 
 /// Construct erasure-coded chunks.
 ///
 /// Works only for 1..65536 chunks.
 /// The data must be non-empty.
-pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8>>, Error> {
+pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
 	if n_chunks == 1 {
-		let encoded = data.encode();
-		return Ok(vec![encoded]);
+		return Ok(vec![data.to_vec()]);
 	}
 	let params = code_params(n_chunks)?;
-	let encoded = data.encode();
 
-	if encoded.is_empty() {
+	if data.is_empty() {
 		return Err(Error::BadPayload);
 	}
 
 	let shards = params
 		.make_encoder()
-		.encode::<WrappedShard>(&encoded[..])
+		.encode::<WrappedShard>(&data[..])
 		.expect("Payload non-empty, shard sizes are uniform, and validator numbers checked; qed");
 
 	Ok(shards.into_iter().map(|w: WrappedShard| w.into_inner()).collect())
@@ -154,13 +159,17 @@ pub fn construct_chunks<T: Encode>(n_chunks: u16, data: &T) -> Result<Vec<Vec<u8
 /// are provided, recovery is not possible.
 ///
 /// Works only for 1..65536 chunks.
-pub fn reconstruct<'a, I: 'a, T: Decode>(n_chunks: u16, chunks: I) -> Result<T, Error>
+///
+/// Due to the internals of the erasure coding algorithm, the output might be
+/// larger than the original data and padded with zeroes, passing `data_len`
+/// allows to truncate the output to the original data size.
+pub fn reconstruct<'a, I: 'a>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
 where
 	I: IntoIterator<Item = (&'a [u8], usize)>,
 {
 	if n_chunks == 1 {
 		let (chunk_data, _) = chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Decode::decode(&mut &chunk_data[..]).map_err(Error::Decode);
+		return Ok(chunk_data.to_vec());
 	}
 	let params = code_params(n_chunks)?;
 	let n = n_chunks as usize;
@@ -177,9 +186,11 @@ where
 		received_shards[chunk_idx] = Some(WrappedShard::new(chunk_data.to_vec()));
 	}
 
-	let payload_bytes = params.make_encoder().reconstruct(received_shards)?;
+	let mut payload_bytes = params.make_encoder().reconstruct(received_shards)?;
 
-	Decode::decode(&mut &payload_bytes[..]).map_err(Error::Decode)
+	payload_bytes.truncate(data_len);
+
+	Ok(payload_bytes)
 }
 
 #[cfg(test)]
@@ -219,10 +230,12 @@ mod tests {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
 			let n_chunks = n_chunks.max(1);
 			let threshold = systematic_recovery_threshold(n_chunks).unwrap();
+			let data_len = available_data.0.len();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			let reconstructed: Vec<u8> = reconstruct_from_systematic(
 				n_chunks,
 				chunks.iter().take(threshold as usize).map(|v| &v[..]).collect(),
+				data_len,
 			)
 			.unwrap();
 			assert_eq!(reconstructed, available_data.0);
@@ -235,6 +248,7 @@ mod tests {
 	fn round_trip_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
 			let n_chunks = n_chunks.max(1);
+			let data_len = available_data.0.len();
 			let threshold = recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			// take the last `threshold` chunks
@@ -245,7 +259,7 @@ mod tests {
 				.take(threshold as usize)
 				.map(|(i, v)| (&v[..], i))
 				.collect();
-			let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks).unwrap();
+			let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data_len).unwrap();
 			assert_eq!(reconstructed, available_data.0);
 		}
 
