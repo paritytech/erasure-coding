@@ -7,7 +7,7 @@ mod merklize;
 
 pub use self::{
 	error::Error,
-	merklize::{ErasureRoot, ErasureRootAndProofs, Proof},
+	merklize::{ErasureRoot, MerklizedChunks, Proof},
 };
 
 use novelpoly::{CodeParams, WrappedShard};
@@ -259,7 +259,7 @@ mod tests {
 			let chunks = construct_chunks(n_chunks, &data.0).unwrap();
 			assert_eq!(chunks.len() as u16, n_chunks);
 
-			let iter = ErasureRootAndProofs::from(chunks.clone());
+			let iter = MerklizedChunks::from(chunks.clone());
 			let root = iter.root();
 			let erasure_chunks: Vec<_> = iter.collect();
 

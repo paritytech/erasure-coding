@@ -4,20 +4,7 @@ use crate::{ChunkIndex, ErasureChunk, Error};
 use bounded_collections::{BoundedVec, ConstU32};
 use scale::{Decode, Encode};
 
-use blake3::{hash as hash_fn, Hash as InnerHash, Hasher as InnerHasher};
-
-// Uncomment this to use blake2b instead of blake3.
-//
-// use blake2::{Blake2b, Digest};
-
-// type InnerHash = [u8; 32];
-// type InnerHasher = Blake2b<blake2::digest::consts::U32>;
-
-// fn hash_fn(data: &[u8]) -> InnerHash {
-// 	let mut hasher = InnerHasher::new();
-// 	hasher.update(data);
-// 	hasher.finalize().into()
-// }
+use blake2b_simd::{blake2b as hash_fn, Hash as InnerHash, State as InnerHasher};
 
 // Binary Merkle Tree with 16-bit `ChunkIndex` has depth at most 17.
 // The proof has at most `depth - 1` length.
@@ -50,7 +37,9 @@ struct Hash([u8; 32]);
 
 impl From<InnerHash> for Hash {
 	fn from(hash: InnerHash) -> Self {
-		Hash(hash.into())
+		let mut output = [0u8; 32];
+		output.copy_from_slice(&hash.as_array()[..32]);
+		Hash(output)
 	}
 }
 
@@ -67,7 +56,7 @@ impl TryFrom<MerklePath> for Proof {
 }
 
 /// Yields all erasure chunks as an iterator.
-pub struct ErasureRootAndProofs {
+pub struct MerklizedChunks {
 	root: ErasureRoot,
 	data: VecDeque<Vec<u8>>,
 	// This is a Binary Merkle Tree,
@@ -93,14 +82,14 @@ enum Direction {
 	Right = 1,
 }
 
-impl ErasureRootAndProofs {
+impl MerklizedChunks {
 	/// Get the erasure root.
 	pub fn root(&self) -> ErasureRoot {
 		self.root.clone()
 	}
 }
 
-impl Iterator for ErasureRootAndProofs {
+impl Iterator for MerklizedChunks {
 	type Item = ErasureChunk;
 
 	fn next(&mut self) -> Option<Self::Item> {
@@ -127,7 +116,7 @@ impl Iterator for ErasureRootAndProofs {
 	}
 }
 
-impl From<Vec<Vec<u8>>> for ErasureRootAndProofs {
+impl From<Vec<Vec<u8>>> for MerklizedChunks {
 	fn from(chunks: Vec<Vec<u8>>) -> Self {
 		let mut hashes: Vec<Hash> = chunks
 			.iter()
@@ -174,8 +163,7 @@ fn combine(left: Hash, right: Hash) -> Hash {
 	hasher.update(left.0.as_slice());
 	hasher.update(right.0.as_slice());
 
-	#[allow(clippy::useless_conversion)]
-	let inner_hash: InnerHash = hasher.finalize().into();
+	let inner_hash: InnerHash = hasher.finalize();
 
 	inner_hash.into()
 }
@@ -219,7 +207,7 @@ mod tests {
 	#[test]
 	fn zero_chunks_works() {
 		let chunks = vec![];
-		let iter = ErasureRootAndProofs::from(chunks.clone());
+		let iter = MerklizedChunks::from(chunks.clone());
 		let root = iter.root();
 		let erasure_chunks: Vec<ErasureChunk> = iter.collect();
 		assert_eq!(erasure_chunks.len(), chunks.len());
@@ -229,7 +217,7 @@ mod tests {
 	#[test]
 	fn iter_works() {
 		let chunks = vec![vec![1], vec![2], vec![3]];
-		let iter = ErasureRootAndProofs::from(chunks.clone());
+		let iter = MerklizedChunks::from(chunks.clone());
 		let root = iter.root();
 		let erasure_chunks: Vec<ErasureChunk> = iter.collect();
 		assert_eq!(erasure_chunks.len(), chunks.len());

@@ -8,12 +8,11 @@ license = "Apache-2.0"
 scale-info = { git = "https://github.com/arkpar/scale-info.git" }
 
 [dependencies]
-blake3 = "1.5.0"
-# blake2 = "0.10.6"
+blake2b_simd = { version = "1", default-features = false }
 bounded-collections = { version = "0.1.9", default-features = false }
 novelpoly = { package = "reed-solomon-novelpoly", git = "https://github.com/paritytech/reed-solomon-novelpoly.git", default-features = false }
 scale = { package = "parity-scale-codec", version = "3.6.9", default-features = false,  features = ["derive"] }
-thiserror = "1.0.56"
+thiserror = { version = "1.0.56", default-features = false }
 
 [profile.dev]
 panic = "abort"
