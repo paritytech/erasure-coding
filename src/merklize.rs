@@ -39,6 +39,12 @@ impl From<[u8; 32]> for ErasureRoot {
 	}
 }
 
+impl From<ErasureRoot> for [u8; 32] {
+	fn from(root: ErasureRoot) -> Self {
+		root.0 .0
+	}
+}
+
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, Debug, Encode, Decode, Default)]
 struct Hash([u8; 32]);
 
