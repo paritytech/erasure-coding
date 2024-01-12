@@ -116,8 +116,9 @@ impl Iterator for MerklizedChunks {
 	}
 }
 
-impl From<Vec<Vec<u8>>> for MerklizedChunks {
-	fn from(chunks: Vec<Vec<u8>>) -> Self {
+impl MerklizedChunks {
+	/// Compute `MerklizedChunks` from a list of erasure chunks.
+	pub fn compute(chunks: Vec<Vec<u8>>) -> Self {
 		let mut hashes: Vec<Hash> = chunks
 			.iter()
 			.map(|chunk| {
@@ -207,7 +208,7 @@ mod tests {
 	#[test]
 	fn zero_chunks_works() {
 		let chunks = vec![];
-		let iter = MerklizedChunks::from(chunks.clone());
+		let iter = MerklizedChunks::compute(chunks.clone());
 		let root = iter.root();
 		let erasure_chunks: Vec<ErasureChunk> = iter.collect();
 		assert_eq!(erasure_chunks.len(), chunks.len());
@@ -217,7 +218,7 @@ mod tests {
 	#[test]
 	fn iter_works() {
 		let chunks = vec![vec![1], vec![2], vec![3]];
-		let iter = MerklizedChunks::from(chunks.clone());
+		let iter = MerklizedChunks::compute(chunks.clone());
 		let root = iter.root();
 		let erasure_chunks: Vec<ErasureChunk> = iter.collect();
 		assert_eq!(erasure_chunks.len(), chunks.len());
