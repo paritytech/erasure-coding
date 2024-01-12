@@ -8,7 +8,7 @@ fn chunks(n_chunks: u16, pov: &[u8]) -> Vec<Vec<u8>> {
 
 fn erasure_root(n_chunks: u16, pov: &[u8]) -> ErasureRoot {
 	let chunks = chunks(n_chunks, pov);
-	MerklizedChunks::from(chunks).root()
+	MerklizedChunks::compute(chunks).root()
 }
 
 fn bench_all(c: &mut Criterion) {
@@ -82,7 +82,7 @@ fn bench_all(c: &mut Criterion) {
 		group.throughput(Throughput::Bytes(pov.len() as u64));
 		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, _| {
 			b.iter(|| {
-				let iter = MerklizedChunks::from(all_chunks.clone());
+				let iter = MerklizedChunks::compute(all_chunks.clone());
 				let n = iter.collect::<Vec<_>>().len();
 				assert_eq!(n, all_chunks.len());
 			});

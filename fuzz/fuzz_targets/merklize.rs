@@ -12,7 +12,7 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 	let chunks = construct_chunks(n_chunks, &data).unwrap();
 	assert_eq!(chunks.len() as u16, n_chunks);
 
-	let iter = MerklizedChunks::from(chunks.clone());
+	let iter = MerklizedChunks::compute(chunks.clone());
 	let root = iter.root();
 	let erasure_chunks: Vec<_> = iter.collect();
 
