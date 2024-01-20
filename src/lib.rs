@@ -170,11 +170,12 @@ where
 	let original_count = systematic_recovery_threshold(n_chunks)? as usize;
 	let recovery_count = n - original_count;
 
-	let (original, recovery): (Vec<_>, Vec<_>) = chunks
+	let (mut original, recovery): (Vec<_>, Vec<_>) = chunks
 		.into_iter()
 		.map(|(i, v)| (i.0 as usize, v))
 		.partition(|(i, _)| *i < original_count);
 
+	original.sort_by_key(|(i, _)| *i);
 	let original_iter = original.iter().map(|(i, v)| (*i, v));
 	let recovery = recovery.into_iter().map(|(i, v)| (i - original_count, v));
 
@@ -187,7 +188,7 @@ where
 	for i in 0..original_count {
 		let chunk = recovered.remove(&i).unwrap_or_else(|| {
 			let (j, v) = original.next().expect("what is not recovered must be present; qed");
-			assert_eq!(i, j);
+			debug_assert_eq!(i, j);
 			v
 		});
 		bytes.extend_from_slice(chunk.as_slice());
@@ -200,6 +201,8 @@ where
 
 #[cfg(test)]
 mod tests {
+	use std::collections::HashMap;
+
 	use super::*;
 	use quickcheck::{Arbitrary, Gen, QuickCheck};
 
@@ -256,15 +259,13 @@ mod tests {
 			let data_len = available_data.0.len();
 			let threshold = recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
-			// take the last `threshold` chunks
-			let last_chunks: Vec<(ChunkIndex, Vec<u8>)> = chunks
+			let map: HashMap<ChunkIndex, Vec<u8>> = chunks
 				.into_iter()
 				.enumerate()
-				.rev()
-				.take(threshold as usize)
 				.map(|(i, v)| (ChunkIndex::from(i as u16), v))
 				.collect();
-			let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data_len).unwrap();
+			let some_chunks = map.into_iter().take(threshold as usize);
+			let reconstructed: Vec<u8> = reconstruct(n_chunks, some_chunks, data_len).unwrap();
 			assert_eq!(reconstructed, available_data.0);
 		}
 

@@ -21,14 +21,13 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 	.unwrap();
 
 	let threshold = recovery_threshold(n_chunks).unwrap();
-	let last_chunks: Vec<(ChunkIndex, Vec<u8>)> = chunks
+	let map: HashMap<ChunkIndex, Vec<u8>> = chunks
 		.into_iter()
 		.enumerate()
-		.rev()
-		.take(threshold as usize)
 		.map(|(i, v)| (ChunkIndex::from(i as u16), v))
 		.collect();
-	let reconstructed: Vec<u8> = reconstruct(n_chunks, last_chunks, data.len()).unwrap();
+	let some_chunks = map.into_iter().take(threshold as usize);
+	let reconstructed: Vec<u8> = reconstruct(n_chunks, some_chunks, data.len()).unwrap();
 
 	assert_eq!(reconstructed, data);
 	assert_eq!(reconstructed_systematic, data);
