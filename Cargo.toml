@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
 
-[patch.crates-io]
-scale-info = { git = "https://github.com/arkpar/scale-info.git" }
-
 [dependencies]
 blake2b_simd = { version = "1", default-features = false }
 bounded-collections = { version = "0.1.9", default-features = false }
