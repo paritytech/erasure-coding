@@ -22,6 +22,8 @@ pub enum Error {
 	InvalidChunkProof,
 	#[error("The proof is too large")]
 	TooLargeProof,
+	#[error("Unexpected behavior of the reed-solomon library")]
+	Bug,
 	#[error("An unknown error has appeared when (re)constructing erasure code chunks")]
 	Unknown,
 }
