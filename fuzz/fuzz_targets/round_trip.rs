@@ -2,6 +2,7 @@
 
 use erasure_coding::*;
 use libfuzzer_sys::fuzz_target;
+use std::collections::HashMap;
 
 fuzz_target!(|data: (Vec<u8>, u16)| {
 	let n_chunks = data.1.max(1).min(2048);
