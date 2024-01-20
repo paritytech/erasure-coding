@@ -96,8 +96,11 @@ pub fn reconstruct_from_systematic(
 		}
 	}
 
-	let mut bytes: Vec<u8> = systematic_chunks.into_iter().take(k).flatten().collect();
-	bytes.truncate(data_len);
+	let mut bytes: Vec<u8> = Vec::with_capacity(shard_len * k);
+	for chunk in systematic_chunks.into_iter().take(k) {
+		bytes.extend_from_slice(&chunk);
+	}
+	bytes.resize(data_len, 0);
 
 	Ok(bytes)
 }
