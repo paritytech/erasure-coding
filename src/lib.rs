@@ -118,14 +118,15 @@ pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Erro
 	}
 	let systematic = systematic_recovery_threshold(n_chunks)?;
 	let original_data = make_original_shards(systematic, data);
+	let original_iter = original_data.iter();
 	let original_count = systematic as usize;
 	let recovery_count = (n_chunks - systematic) as usize;
 
-	let original_iter = original_data.iter();
 	let recovery = reed_solomon::encode(original_count, recovery_count, original_iter)?;
 
 	let mut result = original_data;
 	result.extend(recovery);
+
 	Ok(result)
 }
 
@@ -133,17 +134,20 @@ fn next_aligned(n: usize, alignment: usize) -> usize {
 	((n + alignment - 1) / alignment) * alignment
 }
 
+fn shard_bytes(systematic: u16, data_len: usize) -> usize {
+	let shard_bytes = (data_len + systematic as usize - 1) / systematic as usize;
+	next_aligned(shard_bytes, SHARD_ALIGNMENT)
+}
+
 // The reed-solomon library takes sharded data as input.
 fn make_original_shards(original_count: u16, data: &[u8]) -> Vec<Vec<u8>> {
-	let n_shards = original_count as usize;
 	assert!(!data.is_empty(), "data must be non-empty");
-	assert_ne!(n_shards, 0);
+	assert_ne!(original_count, 0);
 
-	let shard_bytes = (data.len() + n_shards - 1) / n_shards;
-	let shard_bytes = next_aligned(shard_bytes, SHARD_ALIGNMENT);
+	let shard_bytes = shard_bytes(original_count, data.len());
 	assert_ne!(shard_bytes, 0);
 
-	let mut result = vec![vec![0u8; shard_bytes]; n_shards];
+	let mut result = vec![vec![0u8; shard_bytes]; original_count as usize];
 	for (i, chunk) in data.chunks(shard_bytes).enumerate() {
 		result[i][..chunk.len()].as_mut().copy_from_slice(chunk);
 	}
@@ -185,9 +189,10 @@ where
 	let mut recovered =
 		reed_solomon::decode(original_count, recovery_count, original_iter, recovery)?;
 
-	let mut original = original.into_iter();
-	let mut bytes = Vec::with_capacity(data_len);
+	let shard_bytes = shard_bytes(original_count as u16, data_len);
+	let mut bytes = Vec::with_capacity(shard_bytes * original_count);
 
+	let mut original = original.into_iter();
 	for i in 0..original_count {
 		let chunk = recovered.remove(&i).unwrap_or_else(|| {
 			let (j, v) = original.next().expect("what is not recovered must be present; qed");
