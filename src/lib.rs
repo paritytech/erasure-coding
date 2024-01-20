@@ -10,12 +10,13 @@ pub use self::{
 	merklize::{ErasureRoot, MerklizedChunks, Proof},
 };
 
-use novelpoly::{CodeParams, WrappedShard};
 use scale::{Decode, Encode};
 use std::ops::AddAssign;
 
-// We are limited to the field order of GF(2^16), which is 65536.
-const MAX_CHUNKS: usize = novelpoly::f2e16::FIELD_SIZE;
+pub const MAX_CHUNKS: u16 = 16384;
+
+// The reed-solomon library requires each shards to be 64 bytes aligned.
+const SHARD_ALIGNMENT: usize = 64;
 
 /// The index of an erasure chunk.
 #[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Encode, Decode, Hash, Debug)]
@@ -46,41 +47,20 @@ pub struct ErasureChunk {
 
 /// Obtain a threshold of chunks that should be enough to recover the data.
 pub const fn recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
-	if n_chunks as usize > MAX_CHUNKS {
+	if n_chunks > MAX_CHUNKS {
 		return Err(Error::TooManyTotalChunks);
-	}
-	if n_chunks == 1 {
-		return Ok(1)
 	}
 	if n_chunks == 0 {
 		return Err(Error::NotEnoughTotalChunks);
 	}
 
-	let needed = n_chunks.saturating_sub(1) / 3;
+	let needed = (n_chunks - 1) / 3;
 	Ok(needed + 1)
 }
 
 /// Obtain the threshold of systematic chunks that should be enough to recover the data.
-///
-/// If the regular `recovery_threshold` is a power of two, then it returns the same value.
-/// Otherwise, it returns the next lower power of two.
 pub fn systematic_recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
-	if n_chunks == 1 {
-		return Ok(1)
-	}
-	code_params(n_chunks).map(|params| params.k() as u16)
-}
-
-fn code_params(n_chunks: u16) -> Result<CodeParams, Error> {
-	let n_wanted = n_chunks;
-	let k_wanted = recovery_threshold(n_wanted)?;
-
-	if n_wanted as usize > MAX_CHUNKS {
-		return Err(Error::TooManyTotalChunks);
-	}
-
-	let params = CodeParams::derive_parameters(n_wanted as usize, k_wanted as usize)?;
-	Ok(params)
+	recovery_threshold(n_chunks)
 }
 
 /// Reconstruct the available data from the set of systematic chunks.
@@ -96,31 +76,27 @@ pub fn reconstruct_from_systematic(
 	systematic_chunks: Vec<Vec<u8>>,
 	data_len: usize,
 ) -> Result<Vec<u8>, Error> {
-	if n_chunks == 1 {
-		let chunk_data = systematic_chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Ok(chunk_data.to_vec());
-	}
-	let code_params = code_params(n_chunks)?;
-	let k = code_params.k();
-
-	for chunk_data in systematic_chunks.iter().take(k) {
-		if chunk_data.len() % 2 != 0 {
-			return Err(Error::UnevenLength);
-		}
-	}
-
+	let k = systematic_recovery_threshold(n_chunks)? as usize;
 	let Some(first_shard) = systematic_chunks.first() else {
 		return Err(Error::NotEnoughChunks);
 	};
+	if k == 1 {
+		return Ok(first_shard[..data_len].to_vec());
+	}
+	if systematic_chunks.len() < k {
+		return Err(Error::NotEnoughChunks);
+	}
 	let shard_len = first_shard.len();
-	if shard_len % 2 != 0 {
-		return Err(Error::UnevenLength);
+	if shard_len % SHARD_ALIGNMENT != 0 {
+		return Err(Error::UnalignedChunk);
+	}
+	for shard_data in systematic_chunks.iter().take(k) {
+		if shard_data.len() != shard_len {
+			return Err(Error::NonUniformChunks)
+		}
 	}
 
-	let mut bytes = code_params.make_encoder().reconstruct_from_systematic(
-		systematic_chunks.into_iter().take(k).map(WrappedShard::new).collect(),
-	)?;
-
+	let mut bytes: Vec<u8> = systematic_chunks.into_iter().take(k).flatten().collect();
 	bytes.truncate(data_len);
 
 	Ok(bytes)
@@ -131,21 +107,45 @@ pub fn reconstruct_from_systematic(
 /// Works only for 1..65536 chunks.
 /// The data must be non-empty.
 pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Error> {
-	if n_chunks == 1 {
-		return Ok(vec![data.to_vec()]);
-	}
-	let params = code_params(n_chunks)?;
-
 	if data.is_empty() {
 		return Err(Error::BadPayload);
 	}
+	if n_chunks == 1 {
+		return Ok(vec![data.to_vec()]);
+	}
+	let systematic = systematic_recovery_threshold(n_chunks)?;
+	let original_data = make_original_shards(systematic, data);
+	let original_count = systematic as usize;
+	let recovery_count = (n_chunks - systematic) as usize;
 
-	let shards = params
-		.make_encoder()
-		.encode::<WrappedShard>(data)
-		.expect("Payload non-empty, shard sizes are uniform, and validator numbers checked; qed");
+	let original_iter = original_data.iter();
+	let recovery = reed_solomon::encode(original_count, recovery_count, original_iter)?;
 
-	Ok(shards.into_iter().map(|w: WrappedShard| w.into_inner()).collect())
+	let mut result = original_data;
+	result.extend(recovery);
+	Ok(result)
+}
+
+fn next_aligned(n: usize, alignment: usize) -> usize {
+	((n + alignment - 1) / alignment) * alignment
+}
+
+// The reed-solomon library takes sharded data as input.
+fn make_original_shards(original_count: u16, data: &[u8]) -> Vec<Vec<u8>> {
+	let n_shards = original_count as usize;
+	assert!(!data.is_empty(), "data must be non-empty");
+	assert_ne!(n_shards, 0);
+
+	let shard_bytes = (data.len() + n_shards - 1) / n_shards;
+	let shard_bytes = next_aligned(shard_bytes, SHARD_ALIGNMENT);
+	assert_ne!(shard_bytes, 0);
+
+	let mut result = vec![vec![0u8; shard_bytes]; n_shards];
+	for (i, chunk) in data.chunks(shard_bytes).enumerate() {
+		result[i][..chunk.len()].as_mut().copy_from_slice(chunk);
+	}
+
+	result
 }
 
 /// Reconstruct decodable data from a set of chunks.
@@ -159,34 +159,43 @@ pub fn construct_chunks(n_chunks: u16, data: &[u8]) -> Result<Vec<Vec<u8>>, Erro
 /// Due to the internals of the erasure coding algorithm, the output might be
 /// larger than the original data and padded with zeroes; passing `data_len`
 /// allows to truncate the output to the original data size.
-pub fn reconstruct<'a, I: 'a>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
+pub fn reconstruct<I>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
 where
 	I: IntoIterator<Item = (ChunkIndex, Vec<u8>)>,
 {
 	if n_chunks == 1 {
-		let (_, chunk_data) = chunks.into_iter().next().ok_or(Error::NotEnoughChunks)?;
-		return Ok(chunk_data);
+		return chunks.into_iter().next().map(|(_, v)| v).ok_or(Error::NotEnoughChunks);
 	}
-	let params = code_params(n_chunks)?;
 	let n = n_chunks as usize;
-	let mut received_shards: Vec<Option<WrappedShard>> = vec![None; n];
-	for (chunk_idx, chunk_data) in chunks.into_iter().take(n) {
-		if chunk_data.len() % 2 != 0 {
-			return Err(Error::UnevenLength);
-		}
+	let original_count = systematic_recovery_threshold(n_chunks)? as usize;
+	let recovery_count = n - original_count;
 
-		if chunk_idx.0 >= n_chunks {
-			return Err(Error::ChunkIndexOutOfBounds { chunk_index: chunk_idx.0, n_chunks });
-		}
+	let (original, recovery): (Vec<_>, Vec<_>) = chunks
+		.into_iter()
+		.map(|(i, v)| (i.0 as usize, v))
+		.partition(|(i, _)| *i < original_count);
 
-		received_shards[chunk_idx.0 as usize] = Some(WrappedShard::new(chunk_data));
+	let original_iter = original.iter().map(|(i, v)| (*i, v));
+	let recovery = recovery.into_iter().map(|(i, v)| (i - original_count, v));
+
+	let mut recovered =
+		reed_solomon::decode(original_count, recovery_count, original_iter, recovery)?;
+
+	let mut original = original.into_iter();
+	let mut bytes = Vec::with_capacity(data_len);
+
+	for i in 0..original_count {
+		let chunk = recovered.remove(&i).unwrap_or_else(|| {
+			let (j, v) = original.next().expect("what is not recovered must be present; qed");
+			assert_eq!(i, j);
+			v
+		});
+		bytes.extend_from_slice(chunk.as_slice());
 	}
 
-	let mut payload_bytes = params.make_encoder().reconstruct(received_shards)?;
+	bytes.truncate(data_len);
 
-	payload_bytes.truncate(data_len);
-
-	Ok(payload_bytes)
+	Ok(bytes)
 }
 
 #[cfg(test)]
@@ -224,7 +233,7 @@ mod tests {
 	#[test]
 	fn round_trip_systematic_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
-			let n_chunks = n_chunks.max(1);
+			let n_chunks = n_chunks.max(1).min(MAX_CHUNKS);
 			let threshold = systematic_recovery_threshold(n_chunks).unwrap();
 			let data_len = available_data.0.len();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
@@ -243,7 +252,7 @@ mod tests {
 	#[test]
 	fn round_trip_works() {
 		fn property(available_data: ArbitraryAvailableData, n_chunks: u16) {
-			let n_chunks = n_chunks.max(1);
+			let n_chunks = n_chunks.max(1).min(MAX_CHUNKS);
 			let data_len = available_data.0.len();
 			let threshold = recovery_threshold(n_chunks).unwrap();
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();

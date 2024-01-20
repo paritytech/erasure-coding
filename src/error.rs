@@ -1,8 +1,8 @@
 use thiserror::Error;
 
 /// Errors in erasure coding.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Error)]
+#[non_exhaustive]
 pub enum Error {
 	#[error("There are too many chunks in total")]
 	TooManyTotalChunks,
@@ -12,8 +12,8 @@ pub enum Error {
 	NotEnoughChunks,
 	#[error("Chunks are not uniform, mismatch in length or are zero sized")]
 	NonUniformChunks,
-	#[error("Uneven length is not valid for field GF(2^16)")]
-	UnevenLength,
+	#[error("Unaligned chunk length")]
+	UnalignedChunk,
 	#[error("Chunk is out of bounds: {chunk_index} not included in 0..{n_chunks}")]
 	ChunkIndexOutOfBounds { chunk_index: u16, n_chunks: u16 },
 	#[error("Reconstructed payload invalid")]
@@ -22,22 +22,21 @@ pub enum Error {
 	InvalidChunkProof,
 	#[error("The proof is too large")]
 	TooLargeProof,
-	#[error("An unknown error has appeared when reconstructing erasure code chunks")]
-	UnknownReconstruction,
-	#[error("An unknown error has appeared when deriving code parameters from validator count")]
-	UnknownCodeParam,
+	#[error("An unknown error has appeared when (re)constructing erasure code chunks")]
+	Unknown,
 }
 
-impl From<novelpoly::Error> for Error {
-	fn from(error: novelpoly::Error) -> Self {
+impl From<reed_solomon::Error> for Error {
+	fn from(error: reed_solomon::Error) -> Self {
+		use reed_solomon::Error::*;
+
 		match error {
-			novelpoly::Error::NeedMoreShards { .. } => Self::NotEnoughChunks,
-			novelpoly::Error::ParamterMustBePowerOf2 { .. } => Self::UnevenLength,
-			novelpoly::Error::WantedShardCountTooHigh(_) => Self::TooManyTotalChunks,
-			novelpoly::Error::WantedShardCountTooLow(_) => Self::NotEnoughTotalChunks,
-			novelpoly::Error::PayloadSizeIsZero { .. } => Self::BadPayload,
-			novelpoly::Error::InconsistentShardLengths { .. } => Self::NonUniformChunks,
-			_ => Self::UnknownReconstruction,
+			NotEnoughShards { .. } => Self::NotEnoughChunks,
+			InvalidShardSize { .. } => Self::UnalignedChunk,
+			TooManyOriginalShards { .. } => Self::TooManyTotalChunks,
+			TooFewOriginalShards { .. } => Self::NotEnoughTotalChunks,
+			DifferentShardSize { .. } => Self::NonUniformChunks,
+			_ => Self::Unknown,
 		}
 	}
 }
