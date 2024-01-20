@@ -63,7 +63,7 @@ pub fn systematic_recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
 	recovery_threshold(n_chunks)
 }
 
-/// Reconstruct the available data from the set of systematic chunks.
+/// Reconstruct the original data from the set of systematic chunks.
 ///
 /// Provide a vector containing the first k chunks in order. If too few chunks are provided,
 /// recovery is not possible.
@@ -148,7 +148,7 @@ fn make_original_shards(original_count: u16, data: &[u8]) -> Vec<Vec<u8>> {
 	result
 }
 
-/// Reconstruct decodable data from a set of chunks.
+/// Reconstruct the original data from a set of chunks.
 ///
 /// Provide an iterator containing chunk data and the corresponding index.
 /// The indices of the present chunks must be indicated. If too few chunks
