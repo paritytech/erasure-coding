@@ -45,7 +45,7 @@ impl From<InnerHash> for Hash {
 
 /// Proof of an erasure chunk which can be verified against [`ErasureRoot`].
 #[derive(PartialEq, Eq, Clone, Debug, Encode, Decode)]
-pub struct Proof(BoundedVec<(Hash, Direction), ConstU32<MAX_MERKLE_PROOF_DEPTH>>);
+pub struct Proof(BoundedVec<Hash, ConstU32<MAX_MERKLE_PROOF_DEPTH>>);
 
 impl TryFrom<MerklePath> for Proof {
 	type Error = Error;
@@ -74,7 +74,7 @@ pub struct MerklizedChunks {
 }
 
 // This is what is actually stored in a `Proof`.
-type MerklePath = Vec<(Hash, Direction)>;
+type MerklePath = Vec<Hash>;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Encode, Decode)]
 enum Direction {
@@ -101,9 +101,9 @@ impl Iterator for MerklizedChunks {
 		for i in 0..d {
 			let layer = &self.tree[i];
 			if index % 2 == 0 {
-				path.push((layer[index + 1], Direction::Right));
+				path.push(layer[index + 1]);
 			} else {
-				path.push((layer[index - 1], Direction::Left));
+				path.push(layer[index - 1]);
 			}
 			index /= 2;
 		}
@@ -172,32 +172,26 @@ fn combine(left: Hash, right: Hash) -> Hash {
 impl ErasureChunk {
 	/// Verify the proof of the chunk against the erasure root and index.
 	pub fn verify(&self, root: &ErasureRoot) -> bool {
-		self.verify_index() && self.verify_root(root)
-	}
-
-	/// Verify the proof of the chunk against the erasure root.
-	pub fn verify_root(&self, root: &ErasureRoot) -> bool {
 		let leaf_hash = Hash::from(hash_fn(&self.chunk));
+		let bits = Bitfield(self.index.0);
 
-		let root_hash =
-			self.proof.0.iter().fold(leaf_hash, |acc, (hash, direction)| match direction {
-				Direction::Left => combine(*hash, acc),
-				Direction::Right => combine(acc, *hash),
-			});
+		let root_hash = self.proof.0.iter().fold((leaf_hash, 0), |(acc, i), hash| {
+			let (a, b) = if bits.get_bit(i) { (*hash, acc) } else { (acc, *hash) };
+			(combine(a, b), i + 1)
+		});
 
-		root_hash == root.0
+		// check the index doesn't contain more bits than the proof length
+		let index_bits = 16 - self.index.0.leading_zeros() as usize;
+		index_bits <= self.proof.0.len() && root_hash.0 == root.0
 	}
+}
 
-	/// Verify the index of the chunk against the proof.
-	/// This check is relatively cheap.
-	pub fn verify_index(&self) -> bool {
-		let (index, _tree_depth) =
-			self.proof.0.iter().fold((0u16, 0), |acc, (_, direction)| match direction {
-				Direction::Left => (acc.0 | (1 << acc.1), acc.1 + 1),
-				Direction::Right => (acc.0, acc.1 + 1),
-			});
+struct Bitfield(u16);
 
-		index == self.index.0
+impl Bitfield {
+	/// Get the bit at the given index.
+	pub fn get_bit(&self, i: usize) -> bool {
+		self.0 & (1u16 << i) != 0
 	}
 }
 
@@ -237,15 +231,29 @@ mod tests {
 
 			assert_eq!(c0, root.0);
 
-			let p = vec![(a1, Direction::Right), (b1, Direction::Right)];
+			let p = vec![a1, b1];
 			Proof::try_from(p).unwrap()
 		};
 
 		assert_eq!(erasure_chunks[0].proof, proof_0);
 
+		let invalid_1 = ErasureChunk {
+			chunk: erasure_chunks[0].chunk.clone(),
+			proof: erasure_chunks[0].proof.clone(),
+			index: ChunkIndex(erasure_chunks[0].index.0 + 1),
+		};
+
+		let invalid_2 = ErasureChunk {
+			chunk: erasure_chunks[0].chunk.clone(),
+			proof: erasure_chunks[0].proof.clone(),
+			index: ChunkIndex(erasure_chunks[0].index.0 | 1 << 15),
+		};
+
+		assert!(!invalid_1.verify(&root));
+		assert!(!invalid_2.verify(&root));
+
 		for chunk in erasure_chunks {
-			assert!(chunk.verify_index());
-			assert!(chunk.verify_root(&root));
+			assert!(chunk.verify(&root));
 		}
 	}
 }
