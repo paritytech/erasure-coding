@@ -76,12 +76,6 @@ pub struct MerklizedChunks {
 // This is what is actually stored in a `Proof`.
 type MerklePath = Vec<Hash>;
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Encode, Decode)]
-enum Direction {
-	Left = 0,
-	Right = 1,
-}
-
 impl MerklizedChunks {
 	/// Get the erasure root.
 	pub fn root(&self) -> ErasureRoot {
