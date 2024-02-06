@@ -89,6 +89,24 @@ fn bench_all(c: &mut Criterion) {
 		});
 	}
 	group.finish();
+
+	let mut group = c.benchmark_group("verify_chunk");
+	for pov_size in POV_SIZES {
+		let pov = vec![0xfe; pov_size];
+		let all_chunks = chunks(N_CHUNKS, &pov);
+		let merkle = MerklizedChunks::compute(all_chunks);
+		let root = merkle.root();
+		let chunks: Vec<_> = merkle.collect();
+		let chunk = chunks[N_CHUNKS as usize / 2].clone();
+
+		group.throughput(Throughput::Bytes(pov.len() as u64));
+		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, _| {
+			b.iter(|| {
+				assert!(chunk.verify(&root));
+			});
+		});
+	}
+	group.finish();
 }
 
 fn criterion_config() -> Criterion {
