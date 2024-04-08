@@ -115,23 +115,26 @@ fn bench_all(c: &mut Criterion) {
 
 	let mut group = c.benchmark_group("verify_chunk");
 	for pov_size in POV_SIZES {
-		let pov = vec![0xfe; pov_size];
-		let all_chunks = chunks(N_CHUNKS, &pov);
-		let merkle = MerklizedChunks::compute(all_chunks);
-		let root = merkle.root();
-		let chunks: Vec<_> = merkle.collect();
-		let chunk = chunks[N_CHUNKS as usize / 2].clone();
+		for n_chunks in N_CHUNKS {
+			let param = BenchParam { pov_size, n_chunks };
+			let pov = vec![0xfe; pov_size];
+			let all_chunks = chunks(n_chunks, &pov);
+			let merkle = MerklizedChunks::compute(all_chunks);
+			let root = merkle.root();
+			let chunks: Vec<_> = merkle.collect();
+			let chunk = chunks[n_chunks as usize / 2].clone();
 
-		group.throughput(Throughput::Bytes(pov.len() as u64));
-		group.bench_with_input(BenchmarkId::from_parameter(pov_size), &N_CHUNKS, |b, _| {
-			b.iter(|| {
-				assert!(chunk.verify(&root));
+			group.throughput(Throughput::Bytes(pov.len() as u64));
+			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, _| {
+				b.iter(|| {
+					assert!(chunk.verify(&root));
+				});
 			});
-		});
+		}
 	}
 	group.finish();
 }
-/*
+
 fn criterion_config() -> Criterion {
 	Criterion::default()
 		.sample_size(15)
@@ -145,7 +148,3 @@ criterion_group!(
 	targets = bench_all,
 );
 criterion_main!(all);
-*/
-fn main() {
-	
-}
