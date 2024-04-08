@@ -113,7 +113,7 @@ fn bench_all(c: &mut Criterion) {
 	}
 	group.finish();
 }
-
+/*
 fn criterion_config() -> Criterion {
 	Criterion::default()
 		.sample_size(15)
@@ -127,3 +127,7 @@ criterion_group!(
 	targets = bench_all,
 );
 criterion_main!(all);
+*/
+fn main() {
+	
+}
