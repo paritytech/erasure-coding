@@ -12,7 +12,7 @@ const MAX_MERKLE_PROOF_DEPTH: u32 = 16;
 
 /// The root of the erasure chunks that can be used to verify chunk proofs.
 #[derive(PartialEq, Eq, Clone, Debug, Hash, PartialOrd, Ord, Encode, Decode)]
-pub struct ErasureRoot(Hash);
+pub struct ErasureRoot(pub Hash);
 
 impl From<Hash> for ErasureRoot {
 	fn from(hash: Hash) -> Self {
@@ -33,7 +33,7 @@ impl From<ErasureRoot> for [u8; 32] {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, Debug, Encode, Decode, Default)]
-struct Hash([u8; 32]);
+pub struct Hash(pub [u8; 32]);
 
 impl From<InnerHash> for Hash {
 	fn from(hash: InnerHash) -> Self {
@@ -45,7 +45,7 @@ impl From<InnerHash> for Hash {
 
 /// Proof of an erasure chunk which can be verified against [`ErasureRoot`].
 #[derive(PartialEq, Eq, Clone, Debug, Encode, Decode)]
-pub struct Proof(BoundedVec<Hash, ConstU32<MAX_MERKLE_PROOF_DEPTH>>);
+pub struct Proof(pub BoundedVec<Hash, ConstU32<MAX_MERKLE_PROOF_DEPTH>>);
 
 impl TryFrom<MerklePath> for Proof {
 	type Error = Error;

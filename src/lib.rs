@@ -7,7 +7,7 @@ mod merklize;
 
 pub use self::{
 	error::Error,
-	merklize::{ErasureRoot, MerklizedChunks, Proof},
+	merklize::{ErasureRoot, MerklizedChunks, Proof, Hash},
 };
 
 use scale::{Decode, Encode};
