@@ -188,7 +188,12 @@ impl SubShardDecoder {
 				N_REDUNDANCY * N_SHARDS,
 				BATCH_SHARD_SIZE,
 			)?,
-			shards_ori: unsafe { std::mem::transmute(shards) },
+			shards_ori: unsafe {
+				std::mem::transmute::<
+					[std::mem::MaybeUninit<[u8; BATCH_SHARD_SIZE]>; N_SHARDS],
+					[[u8; BATCH_SHARD_SIZE]; N_SHARDS],
+				>(shards)
+			},
 		})
 	}
 
