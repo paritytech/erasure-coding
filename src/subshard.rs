@@ -459,6 +459,7 @@ mod tests {
 			assert_eq!(i, 1);
 			assert_eq!((i_seg as u8, segments[i_seg].clone()), s[0]);
 		}
+
 		// try batching 2 subchunk
 		if nb_seg < 2 {
 			return;

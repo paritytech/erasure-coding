@@ -175,12 +175,17 @@ fn make_original_shards(original_count: u16, data: &[u8]) -> Vec<Vec<u8>> {
 /// Due to the internals of the erasure coding algorithm, the output might be
 /// larger than the original data and padded with zeroes; passing `data_len`
 /// allows to truncate the output to the original data size.
-pub fn reconstruct<I>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
+pub fn reconstruct<I, C>(n_chunks: u16, chunks: I, data_len: usize) -> Result<Vec<u8>, Error>
 where
-	I: IntoIterator<Item = (ChunkIndex, Vec<u8>)>,
+	I: IntoIterator<Item = (ChunkIndex, C)>,
+	C: AsRef<[u8]>,
 {
 	if n_chunks == 1 {
-		return chunks.into_iter().next().map(|(_, v)| v).ok_or(Error::NotEnoughChunks);
+		return chunks
+			.into_iter()
+			.next()
+			.map(|(_, v)| v.as_ref().to_vec())
+			.ok_or(Error::NotEnoughChunks);
 	}
 	let n = n_chunks as usize;
 	let original_count = systematic_recovery_threshold(n_chunks)? as usize;
@@ -203,12 +208,13 @@ where
 
 	let mut original = original.into_iter();
 	for i in 0..original_count {
-		let chunk = recovered.remove(&i).unwrap_or_else(|| {
+		if let Some(chunk) = recovered.remove(&i) {
+			bytes.extend_from_slice(chunk.as_ref());
+		} else {
 			let (j, v) = original.next().expect("what is not recovered must be present; qed");
 			debug_assert_eq!(i, j);
-			v
-		});
-		bytes.extend_from_slice(chunk.as_slice());
+			bytes.extend_from_slice(v.as_ref());
+		}
 	}
 
 	bytes.truncate(data_len);
