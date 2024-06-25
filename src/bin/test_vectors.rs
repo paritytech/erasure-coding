@@ -3,6 +3,7 @@
 //! (no error handling constant parameter definition).
 
 use erasure_coding::{construct_chunks, ChunkIndex, SEGMENT_SIZE};
+use jsonschema::JSONSchema;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_with::{
@@ -43,8 +44,11 @@ fn main() {
 	let dir: PathBuf = VECS_LOCATION.into();
 	let paths = std::fs::read_dir(&dir).unwrap();
 
+	let json_schema: serde_json::value::Value =
+		serde_json::from_reader(File::open("vector_schema.json").unwrap()).unwrap();
+	let schema = JSONSchema::compile(&json_schema).unwrap();
 	for path in paths {
-		check_package_vector(&path.unwrap().path());
+		check_package_vector(&path.unwrap().path(), Some(&schema));
 	}
 }
 
@@ -125,8 +129,11 @@ fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
 		.collect()
 }
 
-fn check_package_vector(path: &Path) {
+fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 	let package: Package = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+	if let Some(schema) = schema {
+		assert!(schema.is_valid(&serde_json::to_value(&package).unwrap()));
+	}
 	let package_size = package.data.len();
 
 	// check package data
