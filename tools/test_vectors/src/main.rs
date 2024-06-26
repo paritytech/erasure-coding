@@ -170,12 +170,12 @@ fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
 		.collect()
 }
 
-fn build_page_proofs(data: &[u8]) -> Vec<Box<[u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE]>> {
+fn build_page_proofs(data: &[u8]) -> Vec<(usize, Box<[u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE]>)> {
 	data.chunks(PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE)
 		.map(|s| {
 			let mut se = [0u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE];
 			se[0..s.len()].copy_from_slice(s);
-			Box::new(se)
+			(s.len() / 32, Box::new(se))
 		})
 		.collect()
 }
@@ -186,20 +186,29 @@ fn build_segment_root(data: &[u8]) -> [u8; 32] {
 	let page_proofs = build_page_proofs(data);
 	let page_proofs_hashes: Vec<_> = page_proofs
 		.iter()
-		.map(|page| {
-			let hash = segment_proof::hash_fn(&page[..]);
+		.map(|(nb_hash, page)| {
+
+			let subtree_root = segment_proof::MerklizedSegments::compute(
+				*nb_hash,
+				true,
+				true,
+				page.chunks(32).take(*nb_hash),
+			);
+
+			//let hash = segment_proof::hash_fn(&page[..]);
 			let mut hash_buff = [0u8; 32];
-			hash_buff.copy_from_slice(&hash.as_bytes()[..32]);
+			hash_buff.copy_from_slice(subtree_root.root());
+			//hash_buff.copy_from_slice(&hash.as_bytes()[..32]);
 			hash_buff
 		})
 		.collect();
 
 	// then build a exported segment root from it.
 	let segment_proof = segment_proof::MerklizedSegments::compute(
-		nb_hash + page_proofs.len(),
+		nb_hash + page_proofs_hashes.len(),
 		true,
 		true,
-		data.chunks(32).chain(page_proofs_hashes.iter().map(|hash| &hash[..])),
+		data.chunks(32).take(nb_hash).chain(page_proofs_hashes.iter().map(|hash| &hash[..])),
 	);
 	let mut root = [0u8; 32];
 	root.copy_from_slice(segment_proof.root());
