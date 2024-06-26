@@ -208,8 +208,24 @@ fn build_segment_root(data: &[u8]) -> [u8; 32] {
 		nb_hash + page_proofs_hashes.len(),
 		true,
 		true,
-		data.chunks(32).take(nb_hash).chain(page_proofs_hashes.iter().map(|hash| &hash[..])),
+		data.chunks(32).take(nb_hash),
 	);
+
+	// assert the page proof hashes are in the segments tree
+	// TODO this code can be remove, we better have utils to
+	// directly check the page proof is at the right location.
+	for page_root in page_proofs_hashes {
+		let mut has = false;
+		for hash in segment_proof.tree.chunks(32) {
+			if page_root == hash {
+				has = true;
+				break;
+			}
+		}
+		assert!(has);
+	}
+
+
 	let mut root = [0u8; 32];
 	root.copy_from_slice(segment_proof.root());
 	root

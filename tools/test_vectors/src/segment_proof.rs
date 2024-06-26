@@ -95,7 +95,7 @@ pub struct MerklizedSegments {
 	// This is a Binary Merkle Tree,
 	// with index define as FullPageProof::offset_depth_const.
 	// It contains middle nodes followed by page proof.
-	tree: Vec<u8>,
+	pub(crate) tree: Vec<u8>,
 }
 
 /// Contains only bytes to distirbute (hash of all segments).
