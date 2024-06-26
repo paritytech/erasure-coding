@@ -34,6 +34,10 @@
         },
         "additionalProperties": false
       }
+    },
+    "segments_root": {
+      "type": "string",
+      "contentEncoding": "base64"
     }
   },
   "required": [

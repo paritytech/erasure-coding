@@ -5,6 +5,7 @@
 use erasure_coding::{construct_chunks, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
 use jsonschema::JSONSchema;
 use rand::RngCore;
+use segment_proof::{PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE, PAGE_PROOF_SEGMENT_HASHES};
 use serde::{Deserialize, Serialize};
 use serde_with::{
 	base64::{Base64, Standard},
@@ -67,6 +68,9 @@ struct Package {
 	chunks_root: [u8; 32],
 	// Segments by index.
 	segments: Vec<Segment>,
+	// Segments by index.
+	#[serde_as(as = "Base64<Standard, Padded>")]
+	segments_root: [u8; 32],
 }
 
 #[serde_as]
@@ -82,6 +86,10 @@ struct Segment {
 #[serde_as]
 #[derive(Deserialize, Serialize, Default, Debug)]
 struct SubChunk(#[serde_as(as = "Base64<Standard, Padded>")] [u8; 12]);
+
+//#[serde_as]
+//#[derive(Deserialize, Serialize, Default, Debug)]
+//struct SerHash(#[serde_as(as = "Base64<Standard, Padded>")] [u8; 32]);
 
 fn build_package_vector(size_index: usize) {
 	let package_size: usize = PACKAGE_SIZES[size_index];
@@ -100,7 +108,7 @@ fn build_package_vector(size_index: usize) {
 	let mut rng = rand::thread_rng();
 	rng.fill_bytes(&mut package.data);
 
-	// chunks
+	// consider data as work package then chunks
 	if package_size >= (64 * N_CHUNKS as usize) {
 		for chunk in construct_chunks(N_CHUNKS * 3, &package.data).unwrap() {
 			package.chunks.push(Chunk(chunk));
@@ -111,7 +119,7 @@ fn build_package_vector(size_index: usize) {
 		std::println!("Skipping size {}, for package", package_size);
 	}
 
-	// subshards
+	// consider data as exported segments then subshards
 	let segments_chunks = build_segments(&package.data);
 	let mut encoder = erasure_coding::SubShardEncoder::new().unwrap();
 	for segment_chunks in encoder.construct_chunks(&segments_chunks).unwrap().into_iter() {
@@ -123,25 +131,28 @@ fn build_package_vector(size_index: usize) {
 	}
 	assert_eq!(package.segments.len(), segments_chunks.len());
 
+	// consider data as containing only hashes of every exported segments up to 2^11 segments.
+	package.segments_root = build_segment_root(package.data.as_slice());
+
 	serde_json::to_writer_pretty(&mut file, &package).unwrap();
 }
 
 fn root_build(data: &[u8], chunk_len: usize) -> [u8; 32] {
-		let chunks_for_root: Vec<_> =
-			data.chunks(chunk_len).map(|s| s.to_vec()).collect();
-	
-		// chunks root
-		let iter = MerklizedChunks::compute(chunks_for_root.clone());
-		let chunks_root: [u8; 32] = iter.root().into();
+	let chunks_for_root: Vec<_> = data.chunks(chunk_len).map(|s| s.to_vec()).collect();
 
-		// chunks root with segment proof code
-		let proof = segment_proof::MerklizedSegments::compute(
-			chunks_for_root.len(),
-			true,
-			chunks_for_root.iter().map(|i| &i[..]),
-		);
-		assert_eq!(chunks_root, proof.root());
-		chunks_root
+	// chunks root
+	let iter = MerklizedChunks::compute(chunks_for_root.clone());
+	let chunks_root: [u8; 32] = iter.root().into();
+
+	// chunks root with segment proof code
+	let proof = segment_proof::MerklizedSegments::compute(
+		chunks_for_root.len(),
+		true,
+		false,
+		chunks_for_root.iter().map(|i| &i[..]),
+	);
+	assert_eq!(chunks_root, proof.root());
+	chunks_root
 }
 
 fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
@@ -153,6 +164,42 @@ fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
 			erasure_coding::Segment { data: Box::new(se), index: i as u32 }
 		})
 		.collect()
+}
+
+fn build_page_proofs(data: &[u8]) -> Vec<Box<[u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE]>> {
+	data.chunks(PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE)
+		.map(|s| {
+			let mut se = [0u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE];
+			se[0..s.len()].copy_from_slice(s);
+			Box::new(se)
+		})
+		.collect()
+}
+
+fn build_segment_root(data: &[u8]) -> [u8; 32] {
+	let nb_hash = std::cmp::min(2048, data.len() / 32);
+	let data = &data[..nb_hash * 32];
+	let page_proofs = build_page_proofs(data);
+	let page_proofs_hashes: Vec<_> = page_proofs
+		.iter()
+		.map(|page| {
+			let hash = segment_proof::hash_fn(&page[..]);
+			let mut hash_buff = [0u8; 32];
+			hash_buff.copy_from_slice(&hash.as_bytes()[..32]);
+			hash_buff
+		})
+		.collect();
+
+	// then build a exported segment root from it.
+	let segment_proof = segment_proof::MerklizedSegments::compute(
+		nb_hash + page_proofs.len(),
+		true,
+		true,
+		data.chunks(32).chain(page_proofs_hashes.iter().map(|hash| &hash[..])),
+	);
+	let mut root = [0u8; 32];
+	root.copy_from_slice(segment_proof.root());
+	root
 }
 
 fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
@@ -228,4 +275,7 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 		assert_eq!(r.0[0].0, seg_index as u8);
 		assert_eq!(r.0[0].1, segments_chunks[seg_index]);
 	}
+
+	let calc_segment_root = build_segment_root(package.data.as_slice());
+	assert_eq!(calc_segment_root, package.segments_root);
 }

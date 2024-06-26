@@ -1,6 +1,6 @@
 //! Page proof for a sequence of segment, and other segment related constant.
 
-use blake2b_simd::{blake2b as hash_fn, State as InnerHasher};
+pub use blake2b_simd::{blake2b as hash_fn, State as InnerHasher};
 use erasure_coding::SEGMENT_SIZE;
 
 const HASH_LEN: usize = 32;
@@ -111,10 +111,15 @@ fn combine(left: &[u8], right: &[u8], dest: &mut [u8], aligned: bool) {
 
 	dest.copy_from_slice(&inner_hash.as_bytes()[..32]);
 }
-const EMPTY: [u8; 32] = [0; 32];
+
 impl MerklizedSegments {
 	/// Compute `MerklizedChunks` from a list of erasure chunks.
-	pub fn compute<'a, I>(total_chunks: usize, aligned: bool, chunks: I) -> Self
+	pub fn compute<'a, I>(
+		total_chunks: usize,
+		aligned: bool,
+		already_hashed: bool,
+		chunks: I,
+	) -> Self
 	where
 		I: Iterator<Item = &'a [u8]>,
 	{
@@ -126,9 +131,14 @@ impl MerklizedSegments {
 		let mut tree = vec![0; nb_nodes * 32];
 		let offset_leaves = Layout::offset_leaves_const(total_chunks, 0);
 		for (i, chunk) in chunks.enumerate() {
-			let hash = hash_fn(chunk);
-			tree[(offset_leaves + i) * 32..(offset_leaves + i + 1) * 32]
-				.copy_from_slice(&hash.as_bytes()[..32]);
+			let hashed;
+			let hash = if already_hashed {
+				&chunk[..32]
+			} else {
+				hashed = hash_fn(chunk);
+				&hashed.as_bytes()[..32]
+			};
+			tree[(offset_leaves + i) * 32..(offset_leaves + i + 1) * 32].copy_from_slice(hash);
 		}
 		Self::compute_inner(tree, layout)
 	}
