@@ -23,9 +23,13 @@ mod segment_proof;
 // 3 test vector of each package size.
 // Some size may not make sense but this should
 // not be an issue regarding EC
-const PACKAGE_SIZES: [usize; 7] = [
+const PACKAGE_SIZES: [usize; 11] = [
+	684, // only one point in subshard.
 	1024,    // one page only padded for subshard
+	2048,
+	2052,
 	4096,    // one page only for subshard
+	4104,   // one page padded
 	15000,   // unaligne padded 4 pages
 	21824,   // min size with full 64 byte aligened chunk.
 	21888,   // aligned full paralellized subshards.
