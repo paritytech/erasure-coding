@@ -2,7 +2,7 @@
 //! Favor succinct code, to be use directly with cargo run.
 //! (no error handling constant parameter definition).
 
-use erasure_coding::{construct_chunks, ChunkIndex, SEGMENT_SIZE};
+use erasure_coding::{construct_chunks, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
 use jsonschema::JSONSchema;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,9 @@ use std::{
 	fs::File,
 	path::{Path, PathBuf},
 };
+
+// TODO this mod could be part of crate, currently copied for external branch
+mod segment_proof;
 
 // 3 test vector of each package size.
 // Some size may not make sense but this should
@@ -59,6 +62,9 @@ struct Package {
 	data: Vec<u8>,
 	// chunks by index (firsts are split package, size of chunk from vec).
 	chunks: Vec<Chunk>,
+	#[serde_as(as = "Base64<Standard, Padded>")]
+	// chunks merkle root
+	chunks_root: [u8; 32],
 	// Segments by index.
 	segments: Vec<Segment>,
 }
@@ -99,6 +105,8 @@ fn build_package_vector(size_index: usize) {
 		for chunk in construct_chunks(N_CHUNKS * 3, &package.data).unwrap() {
 			package.chunks.push(Chunk(chunk));
 		}
+		let chunk_len = package.chunks[0].0.len();
+		package.chunks_root = root_build(package.data.as_slice(), chunk_len);
 	} else {
 		std::println!("Skipping size {}, for package", package_size);
 	}
@@ -116,6 +124,24 @@ fn build_package_vector(size_index: usize) {
 	assert_eq!(package.segments.len(), segments_chunks.len());
 
 	serde_json::to_writer_pretty(&mut file, &package).unwrap();
+}
+
+fn root_build(data: &[u8], chunk_len: usize) -> [u8; 32] {
+		let chunks_for_root: Vec<_> =
+			data.chunks(chunk_len).map(|s| s.to_vec()).collect();
+	
+		// chunks root
+		let iter = MerklizedChunks::compute(chunks_for_root.clone());
+		let chunks_root: [u8; 32] = iter.root().into();
+
+		// chunks root with segment proof code
+		let proof = segment_proof::MerklizedSegments::compute(
+			chunks_for_root.len(),
+			true,
+			chunks_for_root.iter().map(|i| &i[..]),
+		);
+		assert_eq!(chunks_root, proof.root());
+		chunks_root
 }
 
 fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
@@ -142,6 +168,9 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 		{
 			assert_eq!(&package.chunks[i].0, chunk);
 		}
+		// check root
+		let chunk_len = package.chunks[0].0.len();
+		assert_eq!(root_build(package.data.as_slice(), chunk_len), package.chunks_root);
 	} else {
 		std::println!("Skipping check size {}, for package", package_size);
 	}

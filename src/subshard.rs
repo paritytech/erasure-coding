@@ -89,7 +89,6 @@ impl SubShardEncoder {
 	}
 
 	/// Construct erasure-coded chunks.
-	/// Resulting in groups of subshard per input segments.
 	pub fn construct_chunks(
 		&mut self,
 		segments: &[Segment],

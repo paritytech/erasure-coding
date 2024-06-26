@@ -15,6 +15,10 @@
         "contentEncoding": "base64"
       }
     },
+    "chunks_root": {
+        "type": "string",
+        "contentEncoding": "base64"
+    },
     "segments": {
       "type": "array",
       "items": {
@@ -27,7 +31,8 @@
               "contentEncoding": "base64"
             }
           }
-        }
+        },
+        "additionalProperties": false
       }
     }
   },
