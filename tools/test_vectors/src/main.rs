@@ -94,7 +94,7 @@ struct SubChunk(#[serde_as(as = "Base64<Standard, Padded>")] [u8; 12]);
 fn build_package_vector(size_index: usize) {
 	let package_size: usize = PACKAGE_SIZES[size_index];
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{:02}", PREFIX_PACKAGE, size_index);
+	let file_name: String = format!("{}_{}", PREFIX_PACKAGE, package_size);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
