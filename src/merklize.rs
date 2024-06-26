@@ -4,7 +4,11 @@ use crate::{ChunkIndex, ErasureChunk, Error};
 use bounded_collections::{BoundedVec, ConstU32};
 use scale::{Decode, Encode};
 
-use blake2b_simd::{blake2b as hash_fn, Hash as InnerHash, State as InnerHasher};
+use blake2b_simd::{Hash as InnerHash, State as InnerHasher};
+
+fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
+	blake2b_simd::Params::new().hash_length(32).hash(data)
+}
 
 // Binary Merkle Tree with 16-bit `ChunkIndex` has depth at most 17.
 // The proof has at most `depth - 1` length.
@@ -38,7 +42,7 @@ struct Hash([u8; 32]);
 impl From<InnerHash> for Hash {
 	fn from(hash: InnerHash) -> Self {
 		let mut output = [0u8; 32];
-		output.copy_from_slice(&hash.as_array()[..32]);
+		output.copy_from_slice(&hash.as_bytes()[..32]);
 		Hash(output)
 	}
 }

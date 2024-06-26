@@ -1,7 +1,11 @@
 //! Page proof for a sequence of segment, and other segment related constant.
 
-pub use blake2b_simd::{blake2b as hash_fn, State as InnerHasher};
+pub use blake2b_simd::State as InnerHasher;
 use erasure_coding::SEGMENT_SIZE;
+
+pub fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
+	blake2b_simd::Params::new().hash_length(32).hash(data)
+}
 
 const HASH_LEN: usize = 32;
 pub type ErasureHash = [u8; HASH_LEN];
