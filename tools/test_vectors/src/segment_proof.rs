@@ -101,7 +101,7 @@ pub struct MerklizedSegments {
 /// Contains only bytes to distirbute (hash of all segments).
 pub struct PageProof<'a>(&'a [u8]);
 
-fn combine(left: &[u8], right: &[u8], dest: &mut [u8], aligned: bool) {
+pub fn combine(left: &[u8], right: &[u8], dest: &mut [u8], aligned: bool) {
 	debug_assert!(aligned || left != &[0; 32]);
 	debug_assert!(aligned || right != &[0; 32]);
 	debug_assert!(left.len() == 32);
@@ -255,3 +255,14 @@ pub struct MerklizedChunksIter<'a> {
 	chunks: &'a MerklizedSegments,
 	current_index: SegmentIndex,
 }
+
+pub struct Bitfield(pub u16);
+
+impl Bitfield {
+	/// Get the bit at the given index.
+	pub fn get_bit(&self, i: usize) -> bool {
+		self.0 & (1u16 << i) != 0
+	}
+}
+
+// TODO add afunction to produce the proof of a subroot here
