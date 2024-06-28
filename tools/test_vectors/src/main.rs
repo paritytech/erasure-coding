@@ -24,15 +24,13 @@ mod segment_proof;
 // Some size may not make sense but this should
 // not be an issue regarding EC
 const PACKAGE_SIZES: [usize; 12] = [
-	15000,
-	684,  // only one point in subshard.
+	15000, 684,  // only one point in subshard.
 	1024, // one page only padded for subshard
-	2048, 2052, 4096,    // one page only for subshard
-	
-	4104,    // one page padded
-	15000,   // unaligne padded 4 pages
-	21824,   // min size with full 64 byte aligened chunk.
-	21888,   // aligned full paralellized subshards.
+	2048, 2052, 4096, // one page only for subshard
+	4104, // one page padded
+	15000, // unaligne padded 4 pages
+	21824, // min size with full 64 byte aligened chunk.
+	21888, // aligned full paralellized subshards.
 	100_000, // larger
 	200_000, // larger 2
 ];
@@ -128,7 +126,7 @@ fn build_vector(size_index: usize) {
 	let mut vector = Vector::default();
 	vector.data = vec![0; package_size];
 	let mut rng = SmallRng::seed_from_u64(0);
-//	let mut rng = rand::thread_rng();
+	//	let mut rng = rand::thread_rng();
 	rng.fill_bytes(&mut vector.data);
 
 	// consider data as work package then chunks
@@ -232,11 +230,16 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 
 	let nb_page = page_proofs.len() as u16;
 	for (i, (nb_hash, page)) in page_proofs.iter().enumerate() {
+		// we bound subtree to less than 64 only, otherwhise
+		// this is part of a proof larger than a page that is aligned
+		// to next power of two so we have to use all tree depth even
+		// if it is a single hash.
+		let bound = if nb_page == 1 { *nb_hash } else { 64 };
 		let subtree_root = segment_proof::MerklizedSegments::compute(
-			*nb_hash,
+			bound,
 			true,
 			true,
-			page.chunks(32).take(*nb_hash),
+			page.chunks(32).take(bound),
 		);
 
 		let mut has = false;
