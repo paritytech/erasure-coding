@@ -4,7 +4,8 @@
 
 use erasure_coding::{construct_chunks, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
 use jsonschema::JSONSchema;
-use rand::{rngs::SmallRng, RngCore, SeedableRng};
+//use rand::{rngs::SmallRng, RngCore, SeedableRng};
+use rand::RngCore;
 use segment_proof::{Layout, PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE, PAGE_PROOF_SEGMENT_HASHES};
 use serde::{Deserialize, Serialize};
 use serde_with::{
@@ -23,10 +24,9 @@ mod segment_proof;
 // 3 test vector of each package size.
 // Some size may not make sense but this should
 // not be an issue regarding EC
-const PACKAGE_SIZES: [usize; 12] = [
-	15000, 684,  // only one point in subshard.
-	1024, // one page only padded for subshard
-	2048, 2052, 4096, // one page only for subshard
+const PACKAGE_SIZES: [usize; 8] = [
+	684, // one subshard point only
+	4096, // one page only for subshard
 	4104, // one page padded
 	15000, // unaligne padded 4 pages
 	21824, // min size with full 64 byte aligened chunk.
@@ -125,8 +125,8 @@ fn build_vector(size_index: usize) {
 
 	let mut vector = Vector::default();
 	vector.data = vec![0; package_size];
-	let mut rng = SmallRng::seed_from_u64(0);
-	//	let mut rng = rand::thread_rng();
+	//let mut rng = SmallRng::seed_from_u64(0);
+	let mut rng = rand::thread_rng();
 	rng.fill_bytes(&mut vector.data);
 
 	// consider data as work package then chunks
@@ -234,7 +234,7 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 		// this is part of a proof larger than a page that is aligned
 		// to next power of two so we have to use all tree depth even
 		// if it is a single hash.
-		let bound = if nb_page == 1 { *nb_hash } else { 64 };
+		let bound = if nb_page == 1 { *nb_hash } else { PAGE_PROOF_SEGMENT_HASHES };
 		let subtree_root = segment_proof::MerklizedSegments::compute(
 			bound,
 			true,
@@ -262,7 +262,6 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 
 		let field = segment_proof::Bitfield(i as u16);
 		let mut level_index = 0; // skip root
-		let mut inc = 1;
 		for i in 0..depth_proof {
 			let mut sibling = Layout::offset_depth_const(i + 1) + level_index;
 			if !field.get_bit(depth_proof - 1 - i as usize) {
@@ -373,6 +372,6 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 	}
 
 	let mut dest = PageProofs::default();
-	let calc_segment_root = build_segment_root(vector.data.as_slice(), &mut dest);
+	build_segment_root(vector.data.as_slice(), &mut dest);
 	assert_eq!(dest, vector.page_proof);
 }

@@ -8,7 +8,7 @@ pub fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 }
 
 const HASH_LEN: usize = 32;
-pub type ErasureHash = [u8; HASH_LEN];
+type ErasureHash = [u8; HASH_LEN];
 pub struct SegmentIndex(u16);
 
 /// Size of stored page proof.
