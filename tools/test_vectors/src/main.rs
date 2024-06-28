@@ -6,7 +6,7 @@ use erasure_coding::{construct_chunks, ChunkIndex, MerklizedChunks, SEGMENT_SIZE
 use jsonschema::JSONSchema;
 //use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use rand::RngCore;
-use segment_proof::{Layout, PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE, PAGE_PROOF_SEGMENT_HASHES};
+use segment_proof::{Layout, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE};
 use serde::{Deserialize, Serialize};
 use serde_with::{
 	base64::{Base64, Standard},
@@ -189,10 +189,10 @@ fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
 		.collect()
 }
 
-fn build_page_proofs(data: &[u8]) -> Vec<(usize, Box<[u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE]>)> {
-	data.chunks(PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE)
+fn build_page_proofs(data: &[u8]) -> Vec<(usize, Box<[u8; PAGE_PROOF_SEGMENT_HASHES_SIZE]>)> {
+	data.chunks(PAGE_PROOF_SEGMENT_HASHES_SIZE)
 		.map(|s| {
-			let mut se = [0u8; PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE];
+			let mut se = [0u8; PAGE_PROOF_SEGMENT_HASHES_SIZE];
 			se[0..s.len()].copy_from_slice(s);
 			(s.len() / 32, Box::new(se))
 		})
@@ -229,6 +229,7 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 	);
 
 	let nb_page = page_proofs.len() as u16;
+	let mut proof_buf: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
 	for (i, (nb_hash, page)) in page_proofs.iter().enumerate() {
 		// we bound subtree to less than 64 only, otherwhise
 		// this is part of a proof larger than a page that is aligned
@@ -260,35 +261,13 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 			16 - (nb_page - 1).leading_zeros() as usize
 		};
 
-		let field = segment_proof::Bitfield(i as u16);
-		let mut level_index = 0; // skip root
-		for i in 0..depth_proof {
-			let mut sibling = Layout::offset_depth_const(i + 1) + level_index;
-			if !field.get_bit(depth_proof - 1 - i as usize) {
-				// switch to right hash
-				sibling += 1;
-			} else {
-				level_index += 1;
-			}
-			let e = depth_proof - 1 - i; // order of node in proof is from leaf
-			encoded_page[2048 + e * 32..2048 + (e + 1) * 32]
-				.copy_from_slice(&segment_proof.tree[sibling * 32..(sibling + 1) * 32]);
-			level_index <<= 1;
+		let proof = segment_proof.page_proof_proof(&mut proof_buf, i as u16);
+		let mut enc_at = 2048;
+		for p in proof {
+			encoded_page[enc_at..enc_at + 32].copy_from_slice(p);
+			enc_at += 32;
 		}
-		let mut calc_root = [0u8; 32];
-		calc_root.copy_from_slice(subtree_root.root());
-		for i in (0..depth_proof).rev() {
-			let e = depth_proof - 1 - i;
-			let hash = &encoded_page[2048 + e * 32..2048 + (e + 1) * 32];
-			let mut hash_buff = [0u8; 32];
-			if field.get_bit(depth_proof - 1 - i as usize) {
-				segment_proof::combine(hash, &calc_root, &mut hash_buff, true);
-			} else {
-				segment_proof::combine(&calc_root, hash, &mut hash_buff, true);
-			}
-			calc_root = hash_buff;
-		}
-		assert_eq!(segment_proof.root(), calc_root);
+		assert!(segment_proof.check_page_proof_root(&mut proof_buf, i as u16, subtree_root.root()));
 		into.page_proofs.push(Bytes(encoded_page.to_vec()));
 	}
 

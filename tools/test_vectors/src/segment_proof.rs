@@ -3,7 +3,7 @@
 pub use blake2b_simd::State as InnerHasher;
 use erasure_coding::SEGMENT_SIZE;
 
-pub fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
+fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 	blake2b_simd::Params::new().hash_length(32).hash(data)
 }
 
@@ -17,7 +17,7 @@ pub struct SegmentIndex(u16);
 pub const PAGE_PROOF_SEGMENT_SIZE: usize = PAGE_PROOF_SEGMENT_HASHES * HASH_LEN * 2;
 
 // half proof are cache of middle nodes
-pub const PAGE_PROOF_SEGMENT_DISTRIBUTED_SIZE: usize = PAGE_PROOF_SEGMENT_SIZE / 2;
+pub const PAGE_PROOF_SEGMENT_HASHES_SIZE: usize = PAGE_PROOF_SEGMENT_SIZE / 2;
 
 pub const PAGE_PROOF_SEGMENT_HASHES: usize = 64;
 
@@ -31,6 +31,8 @@ pub const SEGMENT_CHUNKS_GROUP_SIZE: usize =
 pub const SEGMENT_CHUNKS_GROUPS: usize = 136;
 
 pub const SEGMENT_CHUNKS_BITMAP_SIZE: usize = SEGMENT_CHUNKS_GROUPS / 8;
+
+pub const MAX_SEGMENT_PROOF_LEN: usize = 11;
 
 // Layout of binary tree
 pub struct Layout {
@@ -248,6 +250,71 @@ impl MerklizedSegments {
 		let ix = Layout::offset_leaves_const(total_chunks, chunk_index);
 		&self.tree[ix * 32..(ix + 1) * 32] == chunk_hash.as_slice()
 	}
+
+	pub fn page_proof_proof<'a, 'b>(&'a self, buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN], at: u16) -> &'b [&'a [u8]] {
+		let nb_page = (((self.layout.nb_leafs - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1) as u16;
+		let depth_proof = if nb_page < 2 {
+			0
+		} else {
+			// - 1 as root not needed (we check against the build one)
+			16 - (nb_page - 1).leading_zeros() as usize
+		};
+
+		let field = Bitfield(at);
+		let mut level_index = 0; // skip root
+		for i in 0..depth_proof {
+			let mut sibling = Layout::offset_depth_const(i + 1) + level_index;
+			if !field.get_bit(depth_proof - 1 - i as usize) {
+				// switch to right hash
+				sibling += 1;
+			} else {
+				level_index += 1;
+			}
+			let e = depth_proof - 1 - i; // order of node in proof is from leaf
+			buffer[e] = &self.tree[sibling * 32..(sibling + 1) * 32];
+			level_index <<= 1;
+		}
+		&buffer[..depth_proof]
+	}
+
+	pub fn check_page_proof_root<'a, 'b>(&'a self, buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN], at: u16, root: &[u8]) -> bool {
+		let proof = self.page_proof_proof(buffer, at);
+		self.check_page_proof_proof(root, proof, at)
+	}
+
+	pub fn check_page_proof_proof(&self, page_proof_root: &[u8], proof: &[&[u8]], at: u16) -> bool {
+		let nb_page = (((self.layout.nb_leafs - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1) as u16;
+		let depth_proof = if nb_page < 2 {
+			0
+		} else {
+			// - 1 as root not needed (we check against the build one)
+			16 - (nb_page - 1).leading_zeros() as usize
+		};
+
+		let field = Bitfield(at);
+		let mut calc_root = page_proof_root;
+		let mut hash_buff1 = [0u8; 32];
+		hash_buff1.copy_from_slice(page_proof_root);
+		let mut hash_buff2 = [0u8; 32];
+		let mut odd = true;
+		for i in (0..depth_proof).rev() {
+			let e = depth_proof - 1 - i;
+			let hash = &proof[e];
+			let (hb, buff) = if odd {
+				(&hash_buff1, &mut hash_buff2)
+			} else {
+				(&hash_buff2, &mut hash_buff1)
+			};
+			if field.get_bit(depth_proof - 1 - i as usize) {
+				combine(hash, hb, buff, true);
+			} else {
+				combine(hb, hash, buff, true);
+			}
+			calc_root = buff;
+			odd = !odd;
+		}
+		self.root() == calc_root
+	}
 }
 
 /// All merkle info for chunks.
@@ -264,5 +331,3 @@ impl Bitfield {
 		self.0 & (1u16 << i) != 0
 	}
 }
-
-// TODO add afunction to produce the proof of a subroot here
