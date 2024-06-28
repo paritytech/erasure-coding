@@ -1,7 +1,7 @@
 //! Page proof for a sequence of segment, and other segment related constant.
 
+use crate::SEGMENT_SIZE;
 pub use blake2b_simd::State as InnerHasher;
-use erasure_coding::SEGMENT_SIZE;
 
 fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 	blake2b_simd::Params::new().hash_length(32).hash(data)
@@ -23,7 +23,7 @@ pub const PAGE_PROOF_SEGMENT_HASHES: usize = 64;
 
 /// Note that we got a bitmap of presence.
 pub const SEGMENT_CHUNKS_GROUP_SIZE: usize =
-	SEGMENT_CHUNKS_GROUPS * erasure_coding::SUBSHARD_SIZE + SEGMENT_CHUNKS_BITMAP_SIZE;
+	SEGMENT_CHUNKS_GROUPS * crate::SUBSHARD_SIZE + SEGMENT_CHUNKS_BITMAP_SIZE;
 
 /// Number of chunks group in constent storage.
 /// TODO @cheme this is not a think through number. just want it to be aligned with 8 for the
@@ -45,11 +45,11 @@ pub struct Layout {
 }
 
 impl Layout {
-	pub fn new(nb_leafs: usize) -> Self {
+	fn new(nb_leafs: usize) -> Self {
 		Self { nb_leafs, nb_leafs_aligned: Some(nb_leafs.next_power_of_two()) }
 	}
 
-	pub fn new_unpadded(nb_leafs: usize) -> Self {
+	fn new_unpadded(nb_leafs: usize) -> Self {
 		Self { nb_leafs, nb_leafs_aligned: None }
 	}
 
@@ -100,8 +100,8 @@ pub struct MerklizedSegments {
 	pub(crate) tree: Vec<u8>,
 }
 
-/// Contains only bytes to distirbute (hash of all segments).
-pub struct PageProof<'a>(&'a [u8]);
+/// Contains list of all hashes from page proof.
+pub struct PageProof<'a>(pub &'a [u8]);
 
 pub fn combine(left: &[u8], right: &[u8], dest: &mut [u8], aligned: bool) {
 	debug_assert!(aligned || left != &[0; 32]);
@@ -200,14 +200,19 @@ impl MerklizedSegments {
 
 	pub fn page_proof(&self) -> PageProof {
 		if let Some(al) = self.layout.nb_leafs_aligned {
-			let padd = (al - self.layout.nb_leafs) * 32;
-			PageProof(
-				&self.tree[self.tree.len() - self.layout.nb_leafs - (al * 32)..
-					self.tree.len() - self.layout.nb_leafs - (padd * 32)],
-			)
+			PageProof(&self.tree[self.tree.len() - (al * 32)..])
 		} else {
 			PageProof(&self.tree[self.tree.len() - (self.layout.nb_leafs * 32)..])
 		}
+	}
+
+	pub fn contains_hash(&self, h1: &[u8]) -> bool {
+		for h2 in self.tree.chunks(32) {
+			if h1 == h2 {
+				return true;
+			}
+		}
+		false
 	}
 
 	pub fn from_page_proof(p: PageProof, aligned: bool) -> Self {
@@ -251,7 +256,11 @@ impl MerklizedSegments {
 		&self.tree[ix * 32..(ix + 1) * 32] == chunk_hash.as_slice()
 	}
 
-	pub fn page_proof_proof<'a, 'b>(&'a self, buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN], at: u16) -> &'b [&'a [u8]] {
+	pub fn page_proof_proof<'a, 'b>(
+		&'a self,
+		buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN],
+		at: u16,
+	) -> &'b [&'a [u8]] {
 		let nb_page = (((self.layout.nb_leafs - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1) as u16;
 		let depth_proof = if nb_page < 2 {
 			0
@@ -277,7 +286,12 @@ impl MerklizedSegments {
 		&buffer[..depth_proof]
 	}
 
-	pub fn check_page_proof_root<'a, 'b>(&'a self, buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN], at: u16, root: &[u8]) -> bool {
+	pub fn check_page_proof_root<'a, 'b>(
+		&'a self,
+		buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN],
+		at: u16,
+		root: &[u8],
+	) -> bool {
 		let proof = self.page_proof_proof(buffer, at);
 		self.check_page_proof_proof(root, proof, at)
 	}
@@ -300,11 +314,8 @@ impl MerklizedSegments {
 		for i in (0..depth_proof).rev() {
 			let e = depth_proof - 1 - i;
 			let hash = &proof[e];
-			let (hb, buff) = if odd {
-				(&hash_buff1, &mut hash_buff2)
-			} else {
-				(&hash_buff2, &mut hash_buff1)
-			};
+			let (hb, buff) =
+				if odd { (&hash_buff1, &mut hash_buff2) } else { (&hash_buff2, &mut hash_buff1) };
 			if field.get_bit(depth_proof - 1 - i as usize) {
 				combine(hash, hb, buff, true);
 			} else {
@@ -317,13 +328,7 @@ impl MerklizedSegments {
 	}
 }
 
-/// All merkle info for chunks.
-pub struct MerklizedChunksIter<'a> {
-	chunks: &'a MerklizedSegments,
-	current_index: SegmentIndex,
-}
-
-pub struct Bitfield(pub u16);
+struct Bitfield(u16);
 
 impl Bitfield {
 	/// Get the bit at the given index.

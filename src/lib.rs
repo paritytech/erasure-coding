@@ -4,6 +4,7 @@
 
 mod error;
 mod merklize;
+pub mod segment_proof;
 mod subshard;
 
 pub use self::{

@@ -2,11 +2,13 @@
 //! Favor succinct code, to be use directly with cargo run.
 //! (no error handling constant parameter definition).
 
-use erasure_coding::{construct_chunks, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
+use erasure_coding::{construct_chunks, segment_proof, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
 use jsonschema::JSONSchema;
 //use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use rand::RngCore;
-use segment_proof::{Layout, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE};
+use segment_proof::{
+	MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE,
+};
 use serde::{Deserialize, Serialize};
 use serde_with::{
 	base64::{Base64, Standard},
@@ -18,19 +20,16 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-// TODO this mod could be part of crate, currently copied for external branch
-mod segment_proof;
-
 // 3 test vector of each package size.
 // Some size may not make sense but this should
 // not be an issue regarding EC
 const PACKAGE_SIZES: [usize; 8] = [
-	684, // one subshard point only
-	4096, // one page only for subshard
-	4104, // one page padded
-	15000, // unaligne padded 4 pages
-	21824, // min size with full 64 byte aligened chunk.
-	21888, // aligned full paralellized subshards.
+	684,     // one subshard point only
+	4096,    // one page only for subshard
+	4104,    // one page padded
+	15000,   // unaligne padded 4 pages
+	21824,   // min size with full 64 byte aligened chunk.
+	21888,   // aligned full paralellized subshards.
 	100_000, // larger
 	200_000, // larger 2
 ];
@@ -243,24 +242,10 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 			page.chunks(32).take(bound),
 		);
 
-		let mut has = false;
-		for hash in segment_proof.tree.chunks(32) {
-			if subtree_root.root() == hash {
-				has = true;
-				break;
-			}
-		}
-		assert!(has);
+		assert!(segment_proof.contains_hash(subtree_root.root()));
 
 		let mut encoded_page = [0u8; 4096];
 		encoded_page[0..2048].copy_from_slice(&page[..]);
-		let depth_proof = if nb_page < 1 {
-			0
-		} else {
-			// - 1 as root not needed (we check against the build one)
-			16 - (nb_page - 1).leading_zeros() as usize
-		};
-
 		let proof = segment_proof.page_proof_proof(&mut proof_buf, i as u16);
 		let mut enc_at = 2048;
 		for p in proof {
