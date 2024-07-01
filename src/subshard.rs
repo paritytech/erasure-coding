@@ -126,6 +126,12 @@ impl IncompleteSegments {
 		}
 	}
 
+	pub fn contains_segment_hash(&mut self, at: SegmentIndex) -> bool {
+		let seg_at = at.0 / 8;
+		let seg_ix = at.0 % 8;
+		self.presence[seg_at as usize] & 1u8 << seg_ix == 1
+	}
+
 	pub fn nb_segments(&self) -> u16 {
 		self.inserted
 	}
