@@ -32,9 +32,11 @@ pub const SEGMENT_CHUNKS_GROUPS: usize = 136;
 
 pub const SEGMENT_CHUNKS_BITMAP_SIZE: usize = SEGMENT_CHUNKS_GROUPS / 8;
 
-pub const MAX_SEGMENT_PROOF_LEN: usize = 11;
+// 2^11 segment grouped in 2^6 pages
+pub const MAX_SEGMENT_PROOF_LEN: usize = 5;
 
 // Layout of binary tree
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Layout {
 	// total number of segments
 	nb_leafs: usize,
@@ -45,7 +47,7 @@ pub struct Layout {
 }
 
 impl Layout {
-	fn new(nb_leafs: usize) -> Self {
+	pub(crate) fn new(nb_leafs: usize) -> Self {
 		Self { nb_leafs, nb_leafs_aligned: Some(nb_leafs.next_power_of_two()) }
 	}
 
@@ -54,6 +56,10 @@ impl Layout {
 	}
 
 	pub fn total_leafs(&self) -> usize {
+		self.nb_leafs_aligned.unwrap_or(self.nb_leafs)
+	}
+
+	pub fn nb_leafs(&self) -> usize {
 		self.nb_leafs
 	}
 
@@ -92,16 +98,17 @@ impl Layout {
 }
 
 /// All merkle info for chunks.
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct MerklizedSegments {
-	layout: Layout,
+	pub layout: Layout,
 	// This is a Binary Merkle Tree,
 	// with index define as FullPageProof::offset_depth_const.
 	// It contains middle nodes followed by page proof.
-	pub(crate) tree: Vec<u8>,
+	pub tree: Vec<u8>,
 }
 
 /// Contains list of all hashes from page proof.
-pub struct PageProof<'a>(pub &'a [u8]);
+pub struct PageProofs<'a>(pub &'a [u8]);
 
 pub fn combine(left: &[u8], right: &[u8], dest: &mut [u8], aligned: bool) {
 	debug_assert!(aligned || left != &[0; 32]);
@@ -149,7 +156,7 @@ impl MerklizedSegments {
 		Self::compute_inner(tree, layout)
 	}
 
-	fn compute_inner(mut tree: Vec<u8>, layout: Layout) -> Self {
+	pub(crate) fn compute_inner(mut tree: Vec<u8>, layout: Layout) -> Self {
 		let total_chunks = layout.nb_leafs;
 		let nb_nodes = Layout::nb_nodes_const(total_chunks, layout.nb_leafs_aligned.is_some());
 		let depth = Layout::depth(total_chunks);
@@ -194,15 +201,140 @@ impl MerklizedSegments {
 		Self { tree, layout }
 	}
 
+	pub(crate) fn add_subtree(&mut self, at: u16, hashes: &[u8], parent_proof: &[&[u8]]) -> bool {
+		let single = parent_proof.is_empty();
+		let nb_hashes = hashes.len() / 32;
+		// this is implemented for align: hashes must be 2^n
+		if hashes.len() % 32 != 0 {
+			// TODO also check aligned
+			return false;
+		}
+		if self.layout.nb_leafs_aligned.is_none() {
+			return false;
+		}
+		if nb_hashes > 64 {
+			return false;
+		}
+		if nb_hashes < 64 && !single {
+			return false;
+		}
+
+		// TODO merge alog with the compute inner one
+		let mut has_prev = false;
+		let depth = Layout::depth(nb_hashes);
+		let (mut nb, depth_parent, depth) = if single {
+			let nb = nb_hashes.next_power_of_two();
+			(nb, depth, depth)
+		} else {
+			let depth_parent = Layout::depth(self.layout.nb_leafs);
+			(nb_hashes, depth_parent, depth)
+		};
+
+		let mut start = Layout::offset_depth_const(depth_parent - 1);
+		let mut offset = at as usize * 64;
+		let start_l = (start + offset) * 32;
+		let end_l = start_l + hashes.len();
+		self.tree[start_l..end_l].copy_from_slice(hashes);
+
+		let tree = &mut self.tree;
+		let mut check_buf = [0u8; 32];
+		let mut rollback = [0usize; MAX_SEGMENT_PROOF_LEN];
+		let mut rollback_len = 0;
+		// feed all from hashes
+		'a: for lvl in (1..depth_parent).rev() {
+			let parent_start = Layout::offset_depth_const(lvl - 1);
+			let mut i_parent = parent_start + offset / 2;
+			if lvl <= depth_parent - depth {
+				let i = start + offset;
+				let sibling = parent_proof[parent_proof.len() - lvl];
+				let (tree, parent) = if offset % 2 == 0 {
+					rollback[rollback_len] = i;
+					let (parent, tree) = tree.split_at_mut(i * 32);
+					tree[32..64].copy_from_slice(sibling);
+					(tree, parent)
+				} else {
+					rollback[rollback_len] = i - 1;
+					let (parent, tree) = tree.split_at_mut((i - 1) * 32);
+					tree[..32].copy_from_slice(sibling);
+					(tree, parent)
+				};
+				rollback_len += 1;
+				if parent[i_parent * 32..(i_parent + 1) * 32] == [0u8; 32] {
+					combine(
+						&tree[0..32],
+						&tree[32..64],
+						&mut parent[i_parent * 32..(i_parent + 1) * 32],
+						true,
+					);
+				} else {
+					// already a checked value
+					combine(&tree[0..32], &tree[32..64], &mut check_buf, true);
+					if check_buf == parent[i_parent * 32..(i_parent + 1) * 32] {
+						break 'a;
+					} else {
+						if !single {
+							for r in rollback.iter().take(rollback_len) {
+								tree[r * 32..(r + 2) * 32].copy_from_slice(&[0u8; 64][..])
+							}
+							for j in start_l..end_l {
+								self.tree[j] = 0;
+							}
+						}
+						return false
+					}
+				}
+			} else {
+				// build from content
+				for i in start + offset..start + offset + nb {
+					if !has_prev {
+						has_prev = true;
+					} else {
+						has_prev = false;
+						let (parent, tree) = tree.split_at_mut((i - 1) * 32);
+						if i_parent == depth_parent - depth &&
+							parent[i_parent * 32..(i_parent + 1) * 32] != [0u8; 32]
+						{
+							// root from a sibling added
+							combine(&tree[0..32], &tree[32..64], &mut check_buf, true);
+							if check_buf == parent[i_parent * 32..(i_parent + 1) * 32] {
+								break 'a;
+							} else {
+								if !single {
+									for j in start_l..end_l {
+										self.tree[j] = 0;
+									}
+								}
+								return false;
+							}
+						} else {
+							combine(
+								&tree[0..32],
+								&tree[32..64],
+								&mut parent[i_parent * 32..(i_parent + 1) * 32],
+								true,
+							);
+						}
+						i_parent += 1;
+					}
+				}
+				debug_assert!(!has_prev);
+				nb /= 2;
+			}
+			offset /= 2;
+			start = parent_start;
+		}
+		true
+	}
+
 	pub fn root(&self) -> &[u8] {
 		&self.tree[0..32]
 	}
 
-	pub fn page_proof(&self) -> PageProof {
+	pub fn page_proof(&self) -> PageProofs {
 		if let Some(al) = self.layout.nb_leafs_aligned {
-			PageProof(&self.tree[self.tree.len() - (al * 32)..])
+			PageProofs(&self.tree[self.tree.len() - (al * 32)..])
 		} else {
-			PageProof(&self.tree[self.tree.len() - (self.layout.nb_leafs * 32)..])
+			PageProofs(&self.tree[self.tree.len() - (self.layout.nb_leafs * 32)..])
 		}
 	}
 
@@ -215,7 +347,7 @@ impl MerklizedSegments {
 		false
 	}
 
-	pub fn from_page_proof(p: PageProof, aligned: bool) -> Self {
+	pub fn from_page_proof(p: PageProofs, aligned: bool) -> Self {
 		let total_chunks = p.0.len();
 		let layout =
 			if aligned { Layout::new(total_chunks) } else { Layout::new_unpadded(total_chunks) };

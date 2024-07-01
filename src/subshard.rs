@@ -3,6 +3,8 @@
 //! to benefit from the simd optimisation in the
 //! best case.
 
+use segment_proof::{Layout, MerklizedSegments, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES};
+
 use super::*;
 use std::{
 	collections::{BTreeMap, BTreeSet},
@@ -66,9 +68,181 @@ pub struct Segment {
 	/// The index of this segment against its full data.
 	pub index: u32,
 }
-
 /// Subshard (points in sequential orders).
 pub type SubShard = [u8; SUBSHARD_SIZE];
+
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct IncompleteSegments {
+	pub merklized: MerklizedSegments,
+	// 2^11 max segment, cut in group of 2^6 page proof hash
+	pub presence: [u8; 256],
+	pub presence_page_proof: [u8; 256 / 64],
+	pub inserted: u16,
+	pub inserted_page_proof: u16,
+}
+
+impl IncompleteSegments {
+	pub fn new(for_root: &[u8]) -> Self {
+		let layout = Layout::new(2048);
+		// Note that we over allocate if nb page is one TODO check if we can pass the nb page here
+		// (we got root already).
+		let mut tree = vec![0; 2048 * 32 * 2];
+		tree[0..32].copy_from_slice(for_root);
+		Self {
+			merklized: MerklizedSegments { layout, tree },
+			presence: [0u8; 256],
+			presence_page_proof: [0u8; 256 / 64],
+			inserted: 0,
+			inserted_page_proof: 0,
+		}
+	}
+
+	pub fn nb_segments(&self) -> u16 {
+		self.inserted
+	}
+
+	pub fn nb_page_proof(&self) -> u16 {
+		self.inserted_page_proof
+	}
+
+	pub fn page_proof(&self, at: u16) -> Option<PageProof> {
+		let byte_at = at / 8;
+		let byte_ix = at % 8;
+		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix == 0 {
+			None
+		} else {
+			Some(PageProof { index: at, parent_proof: &self.merklized })
+		}
+	}
+
+	// at being page proof index (first segment index of page / 64).
+	pub fn insert_page_proof_hashes(&mut self, encoded: &[u8], at: u16) -> Option<bool> {
+		let byte_at = at / 8;
+		let byte_ix = at % 8;
+
+		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix != 0 {
+			// already present, do not check
+			return Some(false);
+		}
+		if encoded.len() != 4096 {
+			// TODO proper error
+			return None;
+		}
+
+		let mut nb_hash = PAGE_PROOF_SEGMENT_HASHES;
+		// check for single page. TODO from jam may be able to pass a parameter
+		if at == 0 {
+			for (i, h) in encoded[0..2048].chunks(32).enumerate() {
+				if h == &[0u8; 32][..] {
+					nb_hash = i;
+					self.merklized.layout = Layout::new(nb_hash);
+					break;
+				}
+			}
+		}
+		let mut proo_slices: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
+		let mut proof_depth = MAX_SEGMENT_PROOF_LEN;
+		assert!(encoded.len() == 4096);
+		for (i, p) in encoded[2048..].chunks(32).take(proof_depth).enumerate() {
+			if p == &[0u8; 32][..] {
+				proof_depth = i;
+				break;
+			}
+			proo_slices[i] = p;
+		}
+		if self.inserted_page_proof == 0 {
+			self.merklized.layout = Layout::new(64 << proof_depth);
+		} else {
+			if Layout::depth(((self.merklized.layout.nb_leafs() - 1) / 64) + 1) != proof_depth + 1 {
+				return None;
+			}
+		}
+		if !self
+			.merklized
+			.add_subtree(at, &encoded[0..nb_hash * 32], &proo_slices[..proof_depth])
+		{
+			// non single rollback done in add_subtree
+			if proof_depth == 0 {
+				self.merklized.layout = Layout::new(2048);
+				// TODO can use a lower bound here (single max layout).
+				self.merklized.tree.fill(0);
+			}
+			return None;
+		}
+
+		self.presence_page_proof[byte_at as usize] |= 1u8 << byte_ix;
+		self.inserted_page_proof += 1;
+		Some(true)
+	}
+}
+
+// TODO could have fix size buf in inner Merklized segments.
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct PageProof<'a> {
+	pub index: u16,
+	pub parent_proof: &'a MerklizedSegments,
+}
+
+impl<'a> PageProof<'a> {
+	pub fn encoded(&self, buff: &mut [u8; 4096]) {
+		let pp = &self.parent_proof.page_proof().0
+			[self.index as usize * PAGE_PROOF_SEGMENT_HASHES * 32..];
+		let size = std::cmp::min(pp.len(), 2048);
+		buff[0..size].copy_from_slice(&pp[..size]);
+		for i in size..2048 {
+			buff[i] = 0;
+		}
+		let mut segment_proof: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
+		let proof = self.parent_proof.page_proof_proof(&mut segment_proof, self.index);
+		let mut enc_at = 2048;
+		for p in proof {
+			buff[enc_at..enc_at + 32].copy_from_slice(p);
+			enc_at += 32;
+		}
+		for i in enc_at..4096 {
+			buff[i] = 0;
+		}
+	}
+
+	/*
+	// TODO only for test?
+	pub fn build_all(segment_proof: MerklizedSegments) -> Vec<PageProof> {
+		let nb_hash = segment_proof.layout.nb_leafs();
+		let nb_page = ((nb_hash - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1;
+		let mut result = Vec::with_capacity(nb_page);
+		for p in 0..nb_page {
+			let page_proof = &segment_proof.page_proof().0[p * PAGE_PROOF_SEGMENT_HASHES * 32..];
+
+			// we bound subtree to less than 64 only, otherwhise
+			// this is part of a proof larger than a page that is aligned
+			// to next power of two so we have to use all tree depth even
+			// if it is a single hash.
+			let bound = if nb_page == 1 { nb_hash } else { PAGE_PROOF_SEGMENT_HASHES };
+			let merklized = segment_proof::MerklizedSegments::compute(
+				bound,
+				true,
+				true,
+				page_proof.chunks(32).take(bound),
+			);
+
+			result.push(PageProof { merklized, index: p as u16 });
+		}
+		result
+	}
+	*/
+}
+
+/// Segment encoded avalability data content for long term availability.
+#[derive(Encode, Decode, Clone, Debug, PartialEq, Eq)]
+pub struct SegmentChunks([u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE]);
+
+impl AsRef<[u8]> for SegmentChunks {
+	// TODO @cheme here may need a specific api to distribute different number
+	// or target single segment
+	fn as_ref(&self) -> &[u8] {
+		self.0.as_slice()
+	}
+}
 
 /// Subshard uses some temp memory, so these should be used multiple time instead of allocating.
 pub struct SubShardEncoder {

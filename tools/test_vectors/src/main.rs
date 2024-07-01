@@ -2,7 +2,10 @@
 //! Favor succinct code, to be use directly with cargo run.
 //! (no error handling constant parameter definition).
 
-use erasure_coding::{construct_chunks, segment_proof, ChunkIndex, MerklizedChunks, SEGMENT_SIZE};
+use erasure_coding::{
+	construct_chunks, segment_proof, ChunkIndex, IncompleteSegments, MerklizedChunks, PageProof,
+	SEGMENT_SIZE,
+};
 use jsonschema::JSONSchema;
 //use rand::{rngs::SmallRng, RngCore, SeedableRng};
 use rand::RngCore;
@@ -227,6 +230,7 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 		data.chunks(32).take(nb_hash),
 	);
 
+	let mut check_build = IncompleteSegments::new(segment_proof.root());
 	let nb_page = page_proofs.len() as u16;
 	let mut proof_buf: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
 	for (i, (nb_hash, page)) in page_proofs.iter().enumerate() {
@@ -252,9 +256,15 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 			encoded_page[enc_at..enc_at + 32].copy_from_slice(p);
 			enc_at += 32;
 		}
+		let pp = PageProof { index: i as u16, parent_proof: &segment_proof };
+		let mut other = [0u8; 4096];
+		pp.encoded(&mut other);
+		assert_eq!(&encoded_page, &other);
+		assert_eq!(check_build.insert_page_proof_hashes(&encoded_page, i as u16), Some(true));
 		assert!(segment_proof.check_page_proof_root(&mut proof_buf, i as u16, subtree_root.root()));
 		into.page_proofs.push(Bytes(encoded_page.to_vec()));
 	}
+	assert_eq!(check_build.nb_page_proof(), nb_page);
 
 	into.segments_root[..].copy_from_slice(segment_proof.root());
 }
