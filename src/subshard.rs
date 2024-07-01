@@ -3,7 +3,7 @@
 //! to benefit from the simd optimisation in the
 //! best case.
 
-use segment_proof::{Layout, MerklizedSegments, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES};
+use segment_proof::{Layout, MerklizedSegments, MAX_NB_SEGMENTS, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE, PAGE_PROOF_SEGMENT_SIZE};
 
 use super::*;
 use std::{
@@ -75,23 +75,23 @@ pub type SubShard = [u8; SUBSHARD_SIZE];
 pub struct IncompleteSegments {
 	pub merklized: MerklizedSegments,
 	// 2^11 max segment, cut in group of 2^6 page proof hash
-	pub presence: [u8; 256],
-	pub presence_page_proof: [u8; 256 / 64],
+	pub presence: [u8; MAX_NB_SEGMENTS / 8],
+	pub presence_page_proof: [u8; MAX_NB_SEGMENTS / PAGE_PROOF_SEGMENT_HASHES / 8],
 	pub inserted: u16,
 	pub inserted_page_proof: u16,
 }
 
 impl IncompleteSegments {
 	pub fn new(for_root: &[u8]) -> Self {
-		let layout = Layout::new(2048);
+		let layout = Layout::new(MAX_NB_SEGMENTS);
 		// Note that we over allocate if nb page is one TODO check if we can pass the nb page here
 		// (we got root already).
-		let mut tree = vec![0; 2048 * 32 * 2];
+		let mut tree = vec![0; MAX_NB_SEGMENTS * 32 * 2];
 		tree[0..32].copy_from_slice(for_root);
 		Self {
 			merklized: MerklizedSegments { layout, tree },
-			presence: [0u8; 256],
-			presence_page_proof: [0u8; 256 / 64],
+			presence: [0u8; MAX_NB_SEGMENTS / 8],
+			presence_page_proof: [0u8; MAX_NB_SEGMENTS / PAGE_PROOF_SEGMENT_HASHES / 8],
 			inserted: 0,
 			inserted_page_proof: 0,
 		}
@@ -124,7 +124,7 @@ impl IncompleteSegments {
 			// already present, do not check
 			return Some(false);
 		}
-		if encoded.len() != 4096 {
+		if encoded.len() != PAGE_PROOF_SEGMENT_SIZE {
 			// TODO proper error
 			return None;
 		}
@@ -132,7 +132,7 @@ impl IncompleteSegments {
 		let mut nb_hash = PAGE_PROOF_SEGMENT_HASHES;
 		// check for single page. TODO from jam may be able to pass a parameter
 		if at == 0 {
-			for (i, h) in encoded[0..2048].chunks(32).enumerate() {
+			for (i, h) in encoded[0..PAGE_PROOF_SEGMENT_HASHES_SIZE].chunks(32).enumerate() {
 				if h == &[0u8; 32][..] {
 					nb_hash = i;
 					self.merklized.layout = Layout::new(nb_hash);
@@ -142,8 +142,7 @@ impl IncompleteSegments {
 		}
 		let mut proo_slices: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
 		let mut proof_depth = MAX_SEGMENT_PROOF_LEN;
-		assert!(encoded.len() == 4096);
-		for (i, p) in encoded[2048..].chunks(32).take(proof_depth).enumerate() {
+		for (i, p) in encoded[PAGE_PROOF_SEGMENT_HASHES_SIZE..].chunks(32).take(proof_depth).enumerate() {
 			if p == &[0u8; 32][..] {
 				proof_depth = i;
 				break;
@@ -163,7 +162,7 @@ impl IncompleteSegments {
 		{
 			// non single rollback done in add_subtree
 			if proof_depth == 0 {
-				self.merklized.layout = Layout::new(2048);
+				self.merklized.layout = Layout::new(MAX_NB_SEGMENTS);
 				// TODO can use a lower bound here (single max layout).
 				self.merklized.tree.fill(0);
 			}
@@ -184,52 +183,25 @@ pub struct PageProof<'a> {
 }
 
 impl<'a> PageProof<'a> {
-	pub fn encoded(&self, buff: &mut [u8; 4096]) {
+	pub fn encoded(&self, buff: &mut [u8; PAGE_PROOF_SEGMENT_SIZE]) {
 		let pp = &self.parent_proof.page_proof().0
 			[self.index as usize * PAGE_PROOF_SEGMENT_HASHES * 32..];
-		let size = std::cmp::min(pp.len(), 2048);
+		let size = std::cmp::min(pp.len(), PAGE_PROOF_SEGMENT_HASHES_SIZE);
 		buff[0..size].copy_from_slice(&pp[..size]);
-		for i in size..2048 {
+		for i in size..PAGE_PROOF_SEGMENT_HASHES_SIZE {
 			buff[i] = 0;
 		}
 		let mut segment_proof: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
 		let proof = self.parent_proof.page_proof_proof(&mut segment_proof, self.index);
-		let mut enc_at = 2048;
+		let mut enc_at = PAGE_PROOF_SEGMENT_HASHES_SIZE;
 		for p in proof {
 			buff[enc_at..enc_at + 32].copy_from_slice(p);
 			enc_at += 32;
 		}
-		for i in enc_at..4096 {
+		for i in enc_at..PAGE_PROOF_SEGMENT_SIZE {
 			buff[i] = 0;
 		}
 	}
-
-	/*
-	// TODO only for test?
-	pub fn build_all(segment_proof: MerklizedSegments) -> Vec<PageProof> {
-		let nb_hash = segment_proof.layout.nb_leafs();
-		let nb_page = ((nb_hash - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1;
-		let mut result = Vec::with_capacity(nb_page);
-		for p in 0..nb_page {
-			let page_proof = &segment_proof.page_proof().0[p * PAGE_PROOF_SEGMENT_HASHES * 32..];
-
-			// we bound subtree to less than 64 only, otherwhise
-			// this is part of a proof larger than a page that is aligned
-			// to next power of two so we have to use all tree depth even
-			// if it is a single hash.
-			let bound = if nb_page == 1 { nb_hash } else { PAGE_PROOF_SEGMENT_HASHES };
-			let merklized = segment_proof::MerklizedSegments::compute(
-				bound,
-				true,
-				true,
-				page_proof.chunks(32).take(bound),
-			);
-
-			result.push(PageProof { merklized, index: p as u16 });
-		}
-		result
-	}
-	*/
 }
 
 /// Segment encoded avalability data content for long term availability.

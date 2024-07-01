@@ -35,6 +35,9 @@ pub const SEGMENT_CHUNKS_BITMAP_SIZE: usize = SEGMENT_CHUNKS_GROUPS / 8;
 // 2^11 segment grouped in 2^6 pages
 pub const MAX_SEGMENT_PROOF_LEN: usize = 5;
 
+// Max segments produced.
+pub const MAX_NB_SEGMENTS: usize = 2048;
+
 // Layout of binary tree
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct Layout {
