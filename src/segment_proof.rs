@@ -9,7 +9,13 @@ fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 
 const HASH_LEN: usize = 32;
 type ErasureHash = [u8; HASH_LEN];
-pub struct SegmentIndex(u16);
+pub struct SegmentIndex(pub u16);
+
+impl SegmentIndex {
+	pub fn page_proof_index(&self) -> u16 {
+		self.0 / PAGE_PROOF_SEGMENT_HASHES as u16
+	}
+}
 
 /// Size of stored page proof.
 /// TODO @cheme distributed is defined to be half of this, not too sure.
@@ -157,6 +163,17 @@ impl MerklizedSegments {
 			tree[(offset_leaves + i) * 32..(offset_leaves + i + 1) * 32].copy_from_slice(hash);
 		}
 		Self::compute_inner(tree, layout)
+	}
+
+	pub fn valid_segment(&self, at: SegmentIndex, segment: &[u8; SEGMENT_SIZE]) -> bool {
+		let depth = Layout::depth(self.layout.nb_leafs);
+		let start = Layout::offset_depth_const(depth - 1) + at.0 as usize * 32;
+
+		let hash = hash_fn(segment);
+		if self.tree.len() < start + 32 {
+			return false;
+		}
+		hash.as_bytes() == &self.tree[start..start + 32]
 	}
 
 	pub(crate) fn compute_inner(mut tree: Vec<u8>, layout: Layout) -> Self {

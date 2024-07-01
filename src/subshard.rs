@@ -3,7 +3,10 @@
 //! to benefit from the simd optimisation in the
 //! best case.
 
-use segment_proof::{Layout, MerklizedSegments, MAX_NB_SEGMENTS, MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE, PAGE_PROOF_SEGMENT_SIZE};
+use segment_proof::{
+	Layout, MerklizedSegments, SegmentIndex, MAX_NB_SEGMENTS, MAX_SEGMENT_PROOF_LEN,
+	PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE, PAGE_PROOF_SEGMENT_SIZE,
+};
 
 use super::*;
 use std::{
@@ -97,6 +100,32 @@ impl IncompleteSegments {
 		}
 	}
 
+	// if already present, no checks.
+	pub fn add_segment_hash(
+		&mut self,
+		at: SegmentIndex,
+		segment: &[u8; SEGMENT_SIZE],
+	) -> Option<bool> {
+		let pp_at = at.page_proof_index();
+
+		let byte_at = pp_at / 8;
+		let byte_ix = pp_at % 8;
+		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix == 0 {
+			return None
+		}
+		let seg_at = at.0 / 8;
+		let seg_ix = at.0 % 8;
+		if self.presence[seg_at as usize] & 1u8 << seg_ix == 1 {
+			return Some(true)
+		}
+		if self.merklized.valid_segment(at, segment) {
+			self.presence[seg_at as usize] |= 1u8 << seg_ix;
+			Some(true)
+		} else {
+			Some(false)
+		}
+	}
+
 	pub fn nb_segments(&self) -> u16 {
 		self.inserted
 	}
@@ -142,7 +171,11 @@ impl IncompleteSegments {
 		}
 		let mut proo_slices: [&[u8]; MAX_SEGMENT_PROOF_LEN] = Default::default();
 		let mut proof_depth = MAX_SEGMENT_PROOF_LEN;
-		for (i, p) in encoded[PAGE_PROOF_SEGMENT_HASHES_SIZE..].chunks(32).take(proof_depth).enumerate() {
+		for (i, p) in encoded[PAGE_PROOF_SEGMENT_HASHES_SIZE..]
+			.chunks(32)
+			.take(proof_depth)
+			.enumerate()
+		{
 			if p == &[0u8; 32][..] {
 				proof_depth = i;
 				break;
