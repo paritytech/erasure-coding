@@ -26,7 +26,10 @@ use std::{
 // 3 test vector of each package size.
 // Some size may not make sense but this should
 // not be an issue regarding EC
-const PACKAGE_SIZES: [usize; 8] = [
+const PACKAGE_SIZES: [usize; 11] = [
+	0,
+	1,
+	32,
 	684,     // one subshard point only
 	4096,    // one page only for subshard
 	4104,    // one page padded

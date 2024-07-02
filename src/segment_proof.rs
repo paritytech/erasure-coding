@@ -178,6 +178,10 @@ impl MerklizedSegments {
 
 	pub(crate) fn compute_inner(mut tree: Vec<u8>, layout: Layout) -> Self {
 		let total_chunks = layout.nb_leafs;
+		if total_chunks == 0 {
+			let empty_root = [0u8; 32];
+			return Self { tree: empty_root.to_vec(), layout }
+		}
 		let nb_nodes = Layout::nb_nodes_const(total_chunks, layout.nb_leafs_aligned.is_some());
 		let depth = Layout::depth(total_chunks);
 		let mut bound = nb_nodes;
