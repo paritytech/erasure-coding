@@ -272,12 +272,13 @@ impl SegmentChunks {
 	}
 
 	pub fn chunk(&self, index_in_group: usize) -> Option<[u8; SUBSHARD_SIZE]> {
-		self.has_chunk(index_in_group)
-			.then(|| {
-				let mut r = [0u8; SUBSHARD_SIZE];
-				r.copy_from_slice(&self.0[index_in_group * SUBSHARD_SIZE..(index_in_group + 1) * SUBSHARD_SIZE]);
-				r
-			})
+		self.has_chunk(index_in_group).then(|| {
+			let mut r = [0u8; SUBSHARD_SIZE];
+			r.copy_from_slice(
+				&self.0[index_in_group * SUBSHARD_SIZE..(index_in_group + 1) * SUBSHARD_SIZE],
+			);
+			r
+		})
 	}
 
 	pub fn set_chunk(&mut self, index_in_group: usize, chunk: &[u8]) -> Option<bool> {
@@ -686,7 +687,9 @@ mod tests {
 					(chunks[i_seg][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 						.iter()
 						.enumerate()
-						.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
+						.map(|(i, c)| {
+							(i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)
+						}),
 				);
 			let (s, i) = decoder.reconstruct(&mut it).unwrap();
 			assert_eq!(i, 1);
