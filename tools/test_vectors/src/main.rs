@@ -185,11 +185,10 @@ fn root_build(data: &[u8], chunk_len: usize) -> MerklizedChunks {
 
 fn build_segments(data: &[u8]) -> Vec<erasure_coding::Segment> {
 	data.chunks(SEGMENT_SIZE)
-		.enumerate()
-		.map(|(i, s)| {
+		.map(|s| {
 			let mut se = [0u8; SEGMENT_SIZE];
 			se[0..s.len()].copy_from_slice(s);
-			erasure_coding::Segment { data: Box::new(se), index: i as u32 }
+			erasure_coding::Segment { data: Box::new(se) }
 		})
 		.collect()
 }
@@ -339,7 +338,7 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 					.iter()
 					.enumerate()
 					.filter(|(i, _)| in_range(*i, true))
-					.map(|(i, c)| (seg_index as u8, ChunkIndex(i as u16), &c.0)),
+					.map(|(i, c)| (seg_index as u8, ChunkIndex(i as u16), c.0)),
 			)
 			.unwrap();
 		assert_eq!(r.1, 1);

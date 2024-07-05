@@ -2,6 +2,7 @@
 
 use crate::SEGMENT_SIZE;
 pub use blake2b_simd::State as InnerHasher;
+use scale::{Decode, Encode};
 
 fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 	blake2b_simd::Params::new().hash_length(32).hash(data)
@@ -109,11 +110,46 @@ impl Layout {
 /// All merkle info for chunks.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct MerklizedSegments {
-	pub layout: Layout,
 	// This is a Binary Merkle Tree,
 	// with index define as FullPageProof::offset_depth_const.
 	// It contains middle nodes followed by page proof.
 	pub tree: Vec<u8>,
+	pub layout: Layout,
+}
+
+// TODO these might not be usefull.
+// Should rather store pageproof?
+impl Encode for MerklizedSegments {
+	fn size_hint(&self) -> usize {
+		let size_size = (self.layout.nb_leafs as u32).size_hint();
+		let nb_nodes =
+			Layout::nb_nodes_const(self.layout.nb_leafs, self.layout.nb_leafs_aligned.is_some());
+		return size_size + nb_nodes * 32;
+	}
+
+	fn encode_to<T: scale::Output + ?Sized>(&self, dest: &mut T) {
+		(self.layout.nb_leafs as u32).encode_to(dest);
+		let nb_nodes =
+			Layout::nb_nodes_const(self.layout.nb_leafs, self.layout.nb_leafs_aligned.is_some());
+		dest.write(&self.tree[..nb_nodes * 32]);
+	}
+
+	fn encoded_size(&self) -> usize {
+		self.size_hint()
+	}
+}
+
+// Should rather store pageproof?
+impl Decode for MerklizedSegments {
+	fn decode<I: scale::Input>(input: &mut I) -> Result<Self, scale::Error> {
+		let nb_leafs = u32::decode(input)? as usize;
+		let layout = Layout::new(nb_leafs);
+		let nb_nodes = Layout::nb_nodes_const(nb_leafs, layout.nb_leafs_aligned.is_some());
+		let size = nb_nodes * 32;
+		let mut tree = vec![0; size];
+		input.read(&mut tree[..])?;
+		Ok(MerklizedSegments { tree, layout })
+	}
 }
 
 /// Contains list of all hashes from page proof.

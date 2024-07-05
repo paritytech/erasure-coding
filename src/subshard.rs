@@ -68,13 +68,12 @@ const BATCH_SHARD_SIZE_2: usize = 2 * SHARD_MIN_SIZE; // 192
 pub struct Segment {
 	/// Fix size chunk of data.
 	pub data: Box<[u8; SEGMENT_SIZE]>,
-	/// The index of this segment against its full data.
-	pub index: u32,
 }
+
 /// Subshard (points in sequential orders).
 pub type SubShard = [u8; SUBSHARD_SIZE];
 
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Encode, Decode, Debug)]
 pub struct IncompleteSegments {
 	pub merklized: MerklizedSegments,
 	// 2^11 max segment, cut in group of 2^6 page proof hash
@@ -244,6 +243,7 @@ impl<'a> PageProof<'a> {
 }
 
 /// Segment encoded avalability data content for long term availability.
+/// Groups are done by consecutive segment indexes.
 #[derive(Encode, Decode, Clone, Debug, PartialEq, Eq)]
 pub struct SegmentChunks([u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE]);
 
@@ -252,6 +252,51 @@ impl AsRef<[u8]> for SegmentChunks {
 	// or target single segment
 	fn as_ref(&self) -> &[u8] {
 		self.0.as_slice()
+	}
+}
+
+#[derive(Encode, Decode, Clone, Debug, PartialEq, Eq)]
+pub struct SegmentMessage([u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE]);
+impl SegmentChunks {
+	pub fn empty() -> Self {
+		Self([0u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE])
+	}
+	pub fn has_chunk(&self, index_in_group: usize) -> bool {
+		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUP_SIZE {
+			return false;
+		}
+		let map_start = segment_proof::SEGMENT_CHUNKS_GROUP_SIZE * SUBSHARD_SIZE;
+		let byte_at = index_in_group / 8;
+		let byte_ix = index_in_group % 8;
+		self.0[map_start + byte_at as usize] & 1u8 << byte_ix != 0
+	}
+
+	pub fn chunk(&self, index_in_group: usize) -> Option<[u8; SUBSHARD_SIZE]> {
+		self.has_chunk(index_in_group)
+			.then(|| {
+				let mut r = [0u8; SUBSHARD_SIZE];
+				r.copy_from_slice(&self.0[index_in_group * SUBSHARD_SIZE..(index_in_group + 1) * SUBSHARD_SIZE]);
+				r
+			})
+	}
+
+	pub fn set_chunk(&mut self, index_in_group: usize, chunk: &[u8]) -> Option<bool> {
+		if chunk.len() != SUBSHARD_SIZE {
+			return None;
+		}
+		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUP_SIZE {
+			return None;
+		}
+		if self.has_chunk(index_in_group) {
+			return Some(false)
+		}
+		let map_start = segment_proof::SEGMENT_CHUNKS_GROUP_SIZE * SUBSHARD_SIZE;
+		let byte_at = index_in_group / 8;
+		let byte_ix = index_in_group % 8;
+		self.0[map_start + byte_at as usize] |= 1u8 << byte_ix;
+		self.0[index_in_group * SUBSHARD_SIZE..(index_in_group + 1) * SUBSHARD_SIZE]
+			.copy_from_slice(chunk);
+		Some(true)
 	}
 }
 
@@ -382,12 +427,12 @@ impl SubShardDecoder {
 	}
 
 	// u8 is the segment number.
-	pub fn reconstruct<'a, I>(
+	pub fn reconstruct<I>(
 		&mut self,
-		subshards: &'a mut I,
+		subshards: &mut I,
 	) -> Result<(Vec<(u8, Segment)>, usize), Error>
 	where
-		I: Iterator<Item = (u8, ChunkIndex, &'a SubShard)>,
+		I: Iterator<Item = (u8, ChunkIndex, SubShard)>,
 	{
 		let mut ori = vec![Vec::new(); TOTAL_SHARDS];
 		let mut segments = BTreeMap::<u8, usize>::new();
@@ -544,8 +589,7 @@ impl SubShardDecoder {
 				let chunk_start = i * SEGMENT_SIZE_ALIGNED;
 				let original = ori_chunk_to_data(&ori_map, chunk_start, Some(SEGMENT_SIZE))
 					.expect("number of segments checked");
-				result2
-					.push((*segment, Segment { data: Box::new(original), index: *segment as u32 }));
+				result2.push((*segment, Segment { data: Box::new(original) }));
 			}
 		}
 
@@ -615,11 +659,11 @@ mod tests {
 		use rand::{rngs::SmallRng, Rng, SeedableRng};
 		let mut rng = SmallRng::from_seed([0; 32]);
 		let segments: Vec<_> = (0..nb_seg)
-			.map(|s| {
+			.map(|_i| {
 				let mut se = [0u8; SEGMENT_SIZE];
 				rng.fill::<_>(&mut se[..]);
 
-				Segment { data: Box::new(se), index: s as u32 }
+				Segment { data: Box::new(se) }
 			})
 			.collect();
 
@@ -631,18 +675,18 @@ mod tests {
 			let mut it = (chunks[i_seg][0..N_SHARDS / 3])
 				.iter()
 				.enumerate()
-				.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16), c))
+				.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16), *c))
 				.chain(
 					(chunks[i_seg][N_SHARDS..N_SHARDS + N_SHARDS / 3])
 						.iter()
 						.enumerate()
-						.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16), c)),
+						.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16), *c)),
 				)
 				.chain(
 					(chunks[i_seg][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 						.iter()
 						.enumerate()
-						.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), c)),
+						.map(|(i, c)| (i_seg as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
 				);
 			let (s, i) = decoder.reconstruct(&mut it).unwrap();
 			assert_eq!(i, 1);
@@ -659,34 +703,34 @@ mod tests {
 		let it1 = (chunks[i_seg1][0..N_SHARDS / 3])
 			.iter()
 			.enumerate()
-			.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16), c))
+			.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16), *c))
 			.chain(
 				(chunks[i_seg1][N_SHARDS..N_SHARDS + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), c)),
+					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), *c)),
 			)
 			.chain(
 				(chunks[i_seg1][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), c)),
+					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
 			);
 		let it2 = (chunks[i_seg2][0..N_SHARDS / 3])
 			.iter()
 			.enumerate()
-			.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16), c))
+			.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16), *c))
 			.chain(
 				(chunks[i_seg2][N_SHARDS..N_SHARDS + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), c)),
+					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), *c)),
 			)
 			.chain(
 				(chunks[i_seg2][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), c)),
+					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
 			);
 
 		let (s, i) = decoder.reconstruct(&mut it1.chain(it2)).unwrap();
@@ -697,36 +741,36 @@ mod tests {
 		let it1 = (chunks[i_seg1][0..N_SHARDS / 3])
 			.iter()
 			.enumerate()
-			.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16), c))
+			.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16), *c))
 			.chain(
 				(chunks[i_seg1][N_SHARDS..N_SHARDS + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), c)),
+					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), *c)),
 			)
 			.chain(
 				(chunks[i_seg1][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), c)),
+					.map(|(i, c)| (i_seg1 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
 			);
 
 		// unaligned a batch of chunks
 		let it3 = (chunks[i_seg2][1..N_SHARDS / 3 + 1])
 			.iter()
 			.enumerate()
-			.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + 1), c))
+			.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + 1), *c))
 			.chain(
 				(chunks[i_seg2][N_SHARDS..N_SHARDS + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), c)),
+					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16), *c)),
 			)
 			.chain(
 				(chunks[i_seg2][N_SHARDS * 2..N_SHARDS * 2 + N_SHARDS / 3])
 					.iter()
 					.enumerate()
-					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), c)),
+					.map(|(i, c)| (i_seg2 as u8, ChunkIndex(i as u16 + N_SHARDS as u16 * 2), *c)),
 			);
 		let (s, i) = decoder.reconstruct(&mut it1.chain(it3)).unwrap();
 		assert_eq!(i, 2); // not all chunk ix are aligned
