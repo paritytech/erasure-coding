@@ -86,8 +86,13 @@ fn bench_all(c: &mut Criterion) {
 			group.throughput(Throughput::Bytes(pov.len() as u64));
 			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, &n| {
 				b.iter(|| {
-					let _pov: Vec<u8> =
-						reconstruct_from_systematic(n, chunks.clone(), pov.len()).unwrap();
+					let _pov: Vec<u8> = reconstruct_from_systematic(
+						n,
+						chunks.len(),
+						&mut chunks.iter().map(Vec::as_slice),
+						pov.len(),
+					)
+					.unwrap();
 				});
 			});
 		}

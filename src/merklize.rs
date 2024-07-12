@@ -47,6 +47,13 @@ impl From<InnerHash> for Hash {
 #[derive(PartialEq, Eq, Clone, Debug, Encode, Decode)]
 pub struct Proof(pub BoundedVec<Hash, ConstU32<MAX_MERKLE_PROOF_DEPTH>>);
 
+impl Proof {
+	/// Approximate allocated size for proof.
+	pub fn alloc_mem(&self) -> usize {
+		self.0.len() * std::mem::size_of::<Hash>()
+	}
+}
+
 impl TryFrom<MerklePath> for Proof {
 	type Error = Error;
 

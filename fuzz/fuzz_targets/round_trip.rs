@@ -16,7 +16,8 @@ fuzz_target!(|data: (Vec<u8>, u16)| {
 	let threshold = systematic_recovery_threshold(n_chunks).unwrap();
 	let reconstructed_systematic: Vec<u8> = reconstruct_from_systematic(
 		n_chunks,
-		chunks.iter().cloned().take(threshold as usize).collect(),
+		chunks.len(),
+		&mut chunks.iter().map(Vec::as_slice),
 		data.len(),
 	)
 	.unwrap();

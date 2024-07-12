@@ -4,6 +4,7 @@
 
 mod error;
 mod merklize;
+mod subshard;
 
 pub use self::{
 	error::Error,
@@ -12,6 +13,7 @@ pub use self::{
 
 use scale::{Decode, Encode};
 use std::ops::AddAssign;
+pub use subshard::*;
 
 pub const MAX_CHUNKS: u16 = 16384;
 
@@ -71,34 +73,41 @@ pub fn systematic_recovery_threshold(n_chunks: u16) -> Result<u16, Error> {
 /// Due to the internals of the erasure coding algorithm, the output might be
 /// larger than the original data and padded with zeroes; passing `data_len`
 /// allows to truncate the output to the original data size.
-pub fn reconstruct_from_systematic(
+pub fn reconstruct_from_systematic<'a>(
 	n_chunks: u16,
-	systematic_chunks: Vec<Vec<u8>>,
+	systematic_len: usize,
+	systematic_chunks: &'a mut impl Iterator<Item = &'a [u8]>,
 	data_len: usize,
 ) -> Result<Vec<u8>, Error> {
 	let k = systematic_recovery_threshold(n_chunks)? as usize;
-	let Some(first_shard) = systematic_chunks.first() else {
-		return Err(Error::NotEnoughChunks);
-	};
-	if k == 1 {
-		return Ok(first_shard[..data_len].to_vec());
-	}
-	if systematic_chunks.len() < k {
+	if systematic_len < k {
 		return Err(Error::NotEnoughChunks);
 	}
-	let shard_len = first_shard.len();
-	if shard_len % SHARD_ALIGNMENT != 0 {
-		return Err(Error::UnalignedChunk);
-	}
-	for shard_data in systematic_chunks.iter().take(k) {
-		if shard_data.len() != shard_len {
+	let mut bytes: Vec<u8> = Vec::with_capacity(0);
+	let mut shard_len = 0;
+	let mut nb = 0;
+	for chunk in systematic_chunks.by_ref() {
+		nb += 1;
+		if shard_len == 0 {
+			shard_len = chunk.len();
+			if shard_len % SHARD_ALIGNMENT != 0 && nb != k {
+				return Err(Error::UnalignedChunk);
+			}
+
+			if k == 1 {
+				return Ok(chunk[..data_len].to_vec());
+			}
+			bytes = Vec::with_capacity(shard_len * k);
+		}
+
+		if chunk.len() != shard_len {
 			return Err(Error::NonUniformChunks)
 		}
-	}
 
-	let mut bytes: Vec<u8> = Vec::with_capacity(shard_len * k);
-	for chunk in systematic_chunks.into_iter().take(k) {
-		bytes.extend_from_slice(&chunk);
+		bytes.extend_from_slice(chunk);
+		if nb == k {
+			break;
+		}
 	}
 	bytes.resize(data_len, 0);
 
@@ -250,7 +259,8 @@ mod tests {
 			let chunks = construct_chunks(n_chunks, &available_data.0).unwrap();
 			let reconstructed: Vec<u8> = reconstruct_from_systematic(
 				n_chunks,
-				chunks.into_iter().take(threshold as usize).collect(),
+				chunks.len(),
+				&mut chunks.iter().take(threshold as usize).map(Vec::as_slice),
 				data_len,
 			)
 			.unwrap();
