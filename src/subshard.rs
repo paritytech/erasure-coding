@@ -326,7 +326,7 @@ impl SubShardEncoder {
 		&mut self,
 		segments: &[Segment],
 	) -> Result<Vec<Box<[SubShard; TOTAL_SHARDS]>>, Error> {
-		self.construct_subshards::<SEGMENT_SIZE, SUBSHARD_SIZE, Segment>(segments) 
+		self.construct_subshards::<SEGMENT_SIZE, SUBSHARD_SIZE, Segment>(segments)
 	}
 
 	/// Construct erasure-coded chunks.
@@ -335,14 +335,14 @@ impl SubShardEncoder {
 		inputs: &[I],
 	) -> Result<Vec<Box<[[u8; OS]; TOTAL_SHARDS]>>, Error> {
 		let output_points = ((S - 1) / POINT_DATA_SIZE) + 1;
-		debug_assert!(OS == output_points * POINT_SIZE); 
+		debug_assert!(OS == output_points * POINT_SIZE);
 
 		let mut result = vec![Box::new([[0u8; OS]; TOTAL_SHARDS]); inputs.len()];
 
 		let mut input_offset = 0;
 		// Note that this could be of different size to fit
-	  // better other input size: currently using something
-	  // in line with segment size.
+		// better other input size: currently using something
+		// in line with segment size.
 		let mut shard = [0u8; BATCH_SHARD_SIZE];
 		let batch_size = BATCH_SHARD_SIZE / OS;
 		for inputs in inputs.chunks(batch_size) {
@@ -366,8 +366,15 @@ impl SubShardEncoder {
 				for segment_i in 0..inputs.len() {
 					for point_i in 0..output_points {
 						let data_i = (point_i * N_SHARDS) * 2 + shard_a * 2;
-						let point = if data_i < SEGMENT_SIZE {
-							(inputs[segment_i].as_ref()[data_i], inputs[segment_i].as_ref()[data_i + 1])
+						let point = if data_i < S {
+							if S % 2 > 0 && data_i + 1 == S {
+								(inputs[segment_i].as_ref()[data_i], 0)
+							} else {
+								(
+									inputs[segment_i].as_ref()[data_i],
+									inputs[segment_i].as_ref()[data_i + 1],
+								)
+							}
 						} else {
 							(0, 0)
 						};
@@ -466,7 +473,7 @@ impl SubShardDecoder {
 	{
 		let output_points = ((S - 1) / POINT_DATA_SIZE) + 1;
 		let s_aligned = output_points * POINT_DATA_SIZE;
-		debug_assert!(OS == output_points * POINT_SIZE); 
+		debug_assert!(OS == output_points * POINT_SIZE);
 		let max_segment_batch = BATCH_SHARD_SIZE / (output_points * POINT_SIZE);
 
 		let mut ori = vec![Vec::new(); TOTAL_SHARDS];
@@ -585,7 +592,8 @@ impl SubShardDecoder {
 					&mut shard_buff
 				};
 				for (segment_i, chunk) in chunks {
-					// Note we could feed segments with the info in the first place to avoid this scan.
+					// Note we could feed segments with the info in the first place to avoid this
+					// scan.
 					if segments.contains(segment_i) {
 						let shard_i_s = nb * OS / SHARD_MIN_SIZE;
 						let shard_i_r = nb * OS % SHARD_MIN_SIZE;
@@ -627,7 +635,7 @@ impl SubShardDecoder {
 			debug_assert_eq!(ori_map.len(), N_SHARDS);
 			for (i, segment) in segments.iter().enumerate() {
 				let chunk_start = i * s_aligned;
-				let original = ori_chunk_to_data::<S>(&ori_map, chunk_start, Some(SEGMENT_SIZE))
+				let original = ori_chunk_to_data::<S>(&ori_map, chunk_start, Some(S))
 					.expect("number of segments checked");
 				result2.push((*segment, Box::new(original)));
 			}

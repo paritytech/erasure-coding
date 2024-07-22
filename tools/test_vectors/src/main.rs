@@ -19,61 +19,92 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-// 3 test vector of each package size.
-// Some size may not make sense but this should
-// not be an issue regarding EC
-const PACKAGE_SIZES: [usize; 11] = [
-	0,
-	1,
-	32,
-	684,     // one subshard point only
-	4096,    // one page only for subshard
-	4104,    // one page padded
-	15000,   // unaligne padded 4 pages
-	21824,   // min size with full 64 byte aligened chunk.
-	21888,   // aligned full paralellized subshards.
-	100_000, // larger
-	200_000, // larger 2
-];
-
 const VECS_LOCATION: &str = "vectors";
 
 const N_CHUNKS: u16 = 341;
 
 const N_SUBCHUNKS: usize = 342;
 
-const PREFIX_PACKAGE: &str = "package";
+const PREFIX_SUBSHARD_EC: &str = "ec";
+const PREFIX_SEGMENT_EC: &str = "segment_ec";
+const PREFIX_SEGMENT_ROOT: &str = "segment_root";
+const PREFIX_PAGEPROOF: &str = "page_proof";
 
 fn main() {
-	for index in 0..PACKAGE_SIZES.len() {
-		build_vector(index);
-	}
+	build_ec::<1, 2>();
+	build_ec::<684, 2>();
+	build_ec::<{ 684 * 2 }, { 2 * 2 }>();
+	build_ec::<{ 684 * 3 }, { 2 * 3 }>();
+	build_ec::<4096, { 2 * 6 }>();
+	build_ec::<{ 684 * 6 }, { 2 * 6 }>();
+
+	build_segment_ec(0);
+	build_segment_ec(1);
+	build_segment_ec(684);
+	build_segment_ec(4096);
+	build_segment_ec(4104);
+	build_segment_ec(15000);
+
+	build_segments_root(21824); // min size with full 64 byte aligened chunk.
+	build_segments_root(21888); // aligned full paralellized subshards.
+	build_segments_root(100_000);
+	build_segments_root(200_000);
+
+	build_page_proofs_vec(0);
+	build_page_proofs_vec(32);
+	build_page_proofs_vec(500 * 32);
+	build_page_proofs_vec(2048 * 32);
+
 	let dir: PathBuf = VECS_LOCATION.into();
 	let paths = std::fs::read_dir(&dir).unwrap();
 
-	let json_schema: serde_json::value::Value =
-		serde_json::from_reader(File::open("vector_schema.json").unwrap()).unwrap();
-	let schema = JSONSchema::compile(&json_schema).unwrap();
+	let schema_subshard_ec = JSONSchema::compile(
+		&serde_json::from_reader(File::open("schema_ec.json").unwrap()).unwrap(),
+	)
+	.unwrap();
+	let schema_page_proof = JSONSchema::compile(
+		&serde_json::from_reader(File::open("schema_page_proof.json").unwrap()).unwrap(),
+	)
+	.unwrap();
+	let schema_segment_root = JSONSchema::compile(
+		&serde_json::from_reader(File::open("schema_segment_root.json").unwrap()).unwrap(),
+	)
+	.unwrap();
+	let schema_segment_ec = JSONSchema::compile(
+		&serde_json::from_reader(File::open("schema_segment_ec.json").unwrap()).unwrap(),
+	)
+	.unwrap();
 	for path in paths {
-		check_package_vector(&path.unwrap().path(), Some(&schema));
+		let path = path.unwrap();
+		if path.file_name().to_str().unwrap().starts_with(PREFIX_SUBSHARD_EC) {}
+		if path.file_name().to_str().unwrap().starts_with(PREFIX_SEGMENT_EC) {
+			check_segment_ec(&path.path(), Some(&schema_segment_ec));
+		}
+		if path.file_name().to_str().unwrap().starts_with(PREFIX_SEGMENT_ROOT) {
+			check_segment_root(&path.path(), Some(&schema_segment_root));
+		}
+		if path.file_name().to_str().unwrap().starts_with(PREFIX_PAGEPROOF) {
+			check_page_proof(&path.path(), Some(&schema_page_proof));
+		}
 	}
 }
 #[serde_as]
 #[derive(Deserialize, Serialize, Default)]
 struct Vector {
-  #[serde_as(as = "serde_with::hex::Hex")]
+	#[serde_as(as = "serde_with::hex::Hex")]
 	data: Vec<u8>,
 	work_package: Package,
-	segment: Segments,
 	page_proof: PageProofs,
 }
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Default)]
 struct Package {
+	#[serde_as(as = "serde_with::hex::Hex")]
+	data: Vec<u8>,
 	// chunks by index (firsts are split package, size of chunk from vec).
 	chunks: Vec<Bytes>,
-  #[serde_as(as = "serde_with::hex::Hex")]
+	#[serde_as(as = "serde_with::hex::Hex")]
 	// chunks merkle root
 	chunks_root: [u8; 32],
 }
@@ -83,11 +114,43 @@ struct Package {
 struct Bytes(#[serde_as(as = "serde_with::hex::Hex")] Vec<u8>);
 
 #[serde_as]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Debug)]
+struct Array<const OS: usize>(#[serde_as(as = "serde_with::hex::Hex")] [u8; OS]);
+
+impl<const OS: usize> Default for Array<OS> {
+	fn default() -> Self {
+		Self([0u8; OS])
+	}
+}
+
+impl<const OS: usize> AsRef<[u8; OS]> for Array<OS> {
+	fn as_ref(&self) -> &[u8; OS] {
+		&self.0
+	}
+}
+
+#[serde_as]
+#[derive(Deserialize, Serialize)]
+struct Ec<const S: usize, const OS: usize> {
+	#[serde_as(as = "serde_with::hex::Hex")]
+	data: [u8; S],
+	chunks: Vec<Array<OS>>,
+}
+
+impl<const S: usize, const OS: usize> Default for Ec<S, OS> {
+	fn default() -> Self {
+		Self { data: [0u8; S], chunks: Default::default() }
+	}
+}
+
+#[serde_as]
 #[derive(Deserialize, Serialize, Default)]
 struct Segments {
+	#[serde_as(as = "serde_with::hex::Hex")]
+	data: Vec<u8>,
 	// Segments by index.
 	segments: Vec<Segment>,
-  #[serde_as(as = "serde_with::hex::Hex")]
+	#[serde_as(as = "serde_with::hex::Hex")]
 	segments_root: [u8; 32],
 }
 
@@ -104,8 +167,10 @@ struct SubChunk(#[serde_as(as = "serde_with::hex::Hex")] [u8; 12]);
 #[serde_as]
 #[derive(Deserialize, Serialize, Default, PartialEq, Eq, Debug)]
 struct PageProofs {
+	#[serde_as(as = "serde_with::hex::Hex")]
+	data: Vec<u8>,
 	page_proofs: Vec<Bytes>,
-  #[serde_as(as = "serde_with::hex::Hex")]
+	#[serde_as(as = "serde_with::hex::Hex")]
 	segments_root: [u8; 32],
 }
 
@@ -113,10 +178,33 @@ struct PageProofs {
 //#[derive(Deserialize, Serialize, Default, Debug)]
 //struct SerHash(#[serde_as(as = "serde_with::hex::Hex")] [u8; 32]);
 
-fn build_vector(size_index: usize) {
-	let package_size: usize = PACKAGE_SIZES[size_index];
+fn build_ec<const S: usize, const OS: usize>() {
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{}", PREFIX_PACKAGE, package_size);
+	let file_name: String = format!("{}_{}", PREFIX_SUBSHARD_EC, S);
+	file_path.push(&file_name);
+	if file_path.exists() {
+		std::println!("Skipping size {}, file {} exists already", S, file_name);
+		return;
+	}
+	let mut file = File::create(&file_path).unwrap();
+
+	let mut vector = Ec::default();
+	//let mut rng = SmallRng::seed_from_u64(0);
+	let mut rng = rand::thread_rng();
+	rng.fill_bytes(&mut vector.data);
+
+	let mut encoder = erasure_coding::SubShardEncoder::new().unwrap();
+	for shard in
+		encoder.construct_subshards::<S, OS, _>(&[Array(vector.data)]).unwrap()[0].into_iter()
+	{
+		vector.chunks.push(Array(shard));
+	}
+	serde_json::to_writer_pretty(&mut file, &vector).unwrap();
+}
+
+fn build_segment_ec(package_size: usize) {
+	let mut file_path: PathBuf = VECS_LOCATION.into();
+	let file_name: String = format!("{}_{}", PREFIX_SEGMENT_EC, package_size);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
@@ -124,23 +212,11 @@ fn build_vector(size_index: usize) {
 	}
 	let mut file = File::create(&file_path).unwrap();
 
-	let mut vector = Vector::default();
+	let mut vector = Segments::default();
 	vector.data = vec![0; package_size];
 	//let mut rng = SmallRng::seed_from_u64(0);
 	let mut rng = rand::thread_rng();
 	rng.fill_bytes(&mut vector.data);
-
-	// consider data as work package then chunks
-	if package_size >= (64 * N_CHUNKS as usize) {
-		for chunk in construct_chunks(N_CHUNKS * 3, &vector.data).unwrap() {
-			vector.work_package.chunks.push(Bytes(chunk));
-		}
-		let chunk_len = vector.work_package.chunks[0].0.len();
-		let merlized = root_build(vector.data.as_slice(), chunk_len);
-		vector.work_package.chunks_root = merlized.root().into();
-	} else {
-		std::println!("Skipping size {}, for package", package_size);
-	}
 
 	// consider data as exported segments then subshards
 	let segments_chunks = build_segments(&vector.data);
@@ -150,13 +226,62 @@ fn build_vector(size_index: usize) {
 		for chunk in segment_chunks.iter() {
 			segment.segment_ec.push(SubChunk(*chunk));
 		}
-		vector.segment.segments.push(segment);
+		vector.segments.push(segment);
 	}
-	assert_eq!(vector.segment.segments.len(), segments_chunks.len());
-	vector.segment.segments_root = root_from_segments(segments_chunks.as_slice());
+	assert_eq!(vector.segments.len(), segments_chunks.len());
+	vector.segments_root = root_from_segments(segments_chunks.as_slice());
+
+	serde_json::to_writer_pretty(&mut file, &vector).unwrap();
+}
+
+fn build_segments_root(package_size: usize) {
+	let mut file_path: PathBuf = VECS_LOCATION.into();
+	let file_name: String = format!("{}_{}", PREFIX_SEGMENT_ROOT, package_size);
+	file_path.push(&file_name);
+	if file_path.exists() {
+		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
+		return;
+	}
+	let mut file = File::create(&file_path).unwrap();
+
+	let mut vector = Package::default();
+	vector.data = vec![0; package_size];
+	//let mut rng = SmallRng::seed_from_u64(0);
+	let mut rng = rand::thread_rng();
+	rng.fill_bytes(&mut vector.data);
+
+	// consider data as work package then chunks
+	if package_size >= (64 * N_CHUNKS as usize) {
+		for chunk in construct_chunks(N_CHUNKS * 3, &vector.data).unwrap() {
+			vector.chunks.push(Bytes(chunk));
+		}
+		let chunk_len = vector.chunks[0].0.len();
+		let merlized = root_build(vector.data.as_slice(), chunk_len);
+		vector.chunks_root = merlized.root().into();
+	} else {
+		std::println!("Skipping size {}, for package", package_size);
+	}
+	serde_json::to_writer_pretty(&mut file, &vector).unwrap();
+}
+
+fn build_page_proofs_vec(package_size: usize) {
+	let mut file_path: PathBuf = VECS_LOCATION.into();
+	let file_name: String = format!("{}_{}", PREFIX_PAGEPROOF, package_size);
+	file_path.push(&file_name);
+	if file_path.exists() {
+		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
+		return;
+	}
+	let mut file = File::create(&file_path).unwrap();
+
+	let mut vector = PageProofs::default();
+	vector.data = vec![0; package_size];
+	//let mut rng = SmallRng::seed_from_u64(0);
+	let mut rng = rand::thread_rng();
+	rng.fill_bytes(&mut vector.data);
 
 	// consider data as containing only hashes of every exported segments up to 2^11 segments.
-	build_segment_root(vector.data.as_slice(), &mut vector.page_proof);
+	build_segment_root(&mut vector);
 
 	serde_json::to_writer_pretty(&mut file, &vector).unwrap();
 }
@@ -215,9 +340,9 @@ fn root_from_segments(segments: &[erasure_coding::Segment]) -> [u8; 32] {
 	hash_buff
 }
 
-fn build_segment_root(data: &[u8], into: &mut PageProofs) {
-	let nb_hash = std::cmp::min(2048, data.len() / 32);
-	let data = &data[..nb_hash * 32];
+fn build_segment_root(into: &mut PageProofs) {
+	let nb_hash = std::cmp::min(2048, into.data.len() / 32);
+	let data = &into.data[..nb_hash * 32];
 	let page_proofs = build_page_proofs(data);
 
 	// then build a exported segment root from it.
@@ -267,66 +392,39 @@ fn build_segment_root(data: &[u8], into: &mut PageProofs) {
 	into.segments_root[..].copy_from_slice(segment_proof.root());
 }
 
-fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
-	let vector: Vector = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+fn check_page_proof(path: &Path, schema: Option<&JSONSchema>) {
+	let vector: PageProofs = serde_json::from_reader(File::open(path).unwrap()).unwrap();
 	if let Some(schema) = schema {
 		assert!(schema.is_valid(&serde_json::to_value(&vector).unwrap()));
 	}
-	let package_size = vector.data.len();
+	let mut dest = PageProofs::default();
+	dest.data = vector.data.clone();
+	build_segment_root(&mut dest);
+	assert_eq!(dest, vector);
+}
 
-	// check package data
-	if package_size >= (64 * N_CHUNKS as usize) {
-		for (i, chunk) in construct_chunks(N_CHUNKS * 3, &vector.data).unwrap().iter().enumerate() {
-			assert_eq!(&vector.work_package.chunks[i].0, chunk);
-		}
-		// check root
-		let chunk_len = vector.work_package.chunks[0].0.len();
-		let merlized = root_build(vector.data.as_slice(), chunk_len);
-		assert_eq!(Into::<[u8; 32]>::into(merlized.root()), vector.work_package.chunks_root);
-	} else {
-		std::println!("Skipping check size {}, for package", package_size);
+fn check_segment_ec(path: &Path, schema: Option<&JSONSchema>) {
+	let vector: Segments = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+	if let Some(schema) = schema {
+		assert!(schema.is_valid(&serde_json::to_value(&vector).unwrap()));
 	}
 
 	// check package chunks
 	let segments_chunks = build_segments(&vector.data);
-	assert_eq!(vector.segment.segments.len(), segments_chunks.len());
-	assert_eq!(vector.segment.segments_root, root_from_segments(segments_chunks.as_slice()));
+	assert_eq!(vector.segments.len(), segments_chunks.len());
+	assert_eq!(vector.segments_root, root_from_segments(segments_chunks.as_slice()));
 	let mut encoder = erasure_coding::SubShardEncoder::new().unwrap();
 	for (i, segment_chunks) in
 		encoder.construct_chunks(&segments_chunks).unwrap().into_iter().enumerate()
 	{
 		for (j, chunk) in segment_chunks.iter().enumerate() {
-			assert_eq!(&vector.segment.segments[i].segment_ec[j].0, chunk);
+			assert_eq!(&vector.segments[i].segment_ec[j].0, chunk);
 		}
 	}
 
-	// check some reconstruct (not necessary)
-
-	// mix half ori half first reco
-	fn in_range(i: usize, sub_chunks: bool) -> bool {
-		let n_chunks = if sub_chunks { N_SUBCHUNKS } else { N_CHUNKS as usize };
-		let split = n_chunks / 2;
-		let high_bound = if n_chunks % 2 == 0 { n_chunks + split } else { n_chunks + split + 1 };
-		i < split || (i >= n_chunks && i < high_bound)
-	}
-	if vector.work_package.chunks.len() > 0 {
-		let r = erasure_coding::reconstruct(
-			N_CHUNKS * 3,
-			vector
-				.work_package
-				.chunks
-				.iter()
-				.enumerate()
-				.filter(|(i, _)| in_range(*i, false))
-				.map(|(i, c)| (ChunkIndex(i as u16), &c.0)),
-			package_size,
-		)
-		.unwrap();
-		assert_eq!(r, vector.data);
-	}
 	let mut decoder = erasure_coding::SubShardDecoder::new().unwrap();
 	// not running segments in parallel (could be but simpler code here)
-	for (seg_index, segment) in vector.segment.segments.iter().enumerate() {
+	for (seg_index, segment) in vector.segments.iter().enumerate() {
 		let r = decoder
 			.reconstruct(
 				&mut segment
@@ -342,8 +440,49 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 		assert_eq!(r.0[0].0, seg_index as u8);
 		assert_eq!(r.0[0].1, segments_chunks[seg_index].data);
 	}
+}
 
-	let mut dest = PageProofs::default();
-	build_segment_root(vector.data.as_slice(), &mut dest);
-	assert_eq!(dest, vector.page_proof);
+fn check_segment_root(path: &Path, schema: Option<&JSONSchema>) {
+	let vector: Package = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+	if let Some(schema) = schema {
+		assert!(schema.is_valid(&serde_json::to_value(&vector).unwrap()));
+	}
+	let package_size = vector.data.len();
+
+	// check package data
+	if package_size >= (64 * N_CHUNKS as usize) {
+		for (i, chunk) in construct_chunks(N_CHUNKS * 3, &vector.data).unwrap().iter().enumerate() {
+			assert_eq!(&vector.chunks[i].0, chunk);
+		}
+		// check root
+		let chunk_len = vector.chunks[0].0.len();
+		let merlized = root_build(vector.data.as_slice(), chunk_len);
+		assert_eq!(Into::<[u8; 32]>::into(merlized.root()), vector.chunks_root);
+	} else {
+		std::println!("Skipping check size {}, for package", package_size);
+	}
+
+	// check some reconstruct (not necessary)
+
+	if vector.chunks.len() > 0 {
+		let r = erasure_coding::reconstruct(
+			N_CHUNKS * 3,
+			vector
+				.chunks
+				.iter()
+				.enumerate()
+				.filter(|(i, _)| in_range(*i, false))
+				.map(|(i, c)| (ChunkIndex(i as u16), &c.0)),
+			package_size,
+		)
+		.unwrap();
+		assert_eq!(r, vector.data);
+	}
+}
+// mix half ori half first reco
+fn in_range(i: usize, sub_chunks: bool) -> bool {
+	let n_chunks = if sub_chunks { N_SUBCHUNKS } else { N_CHUNKS as usize };
+	let split = n_chunks / 2;
+	let high_bound = if n_chunks % 2 == 0 { n_chunks + split } else { n_chunks + split + 1 };
+	i < split || (i >= n_chunks && i < high_bound)
 }
