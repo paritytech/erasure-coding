@@ -10,9 +10,8 @@ blake2b_simd = { version = "1", default-features = false }
 erasure-coding = { path = "../.." }
 serde_json = { version = "1.0" }
 serde = { version = "1.0", features = ["derive"] }
-serde_with = { version = "*", features = ["base64"] }
+serde_with = { version = "*", features = ["hex"] }
 rand = { version = "0.8.4", features = ["small_rng"] }
-base64 = { version = "0.22" }
 jsonschema = { version = "0.18" }
 
 [profile.dev]

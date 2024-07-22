@@ -6,7 +6,7 @@
   "properties": {
     "data": {
       "type": "string",
-      "contentEncoding": "base64"
+      "contentEncoding": "base16"
     },
     "work_package": {
       "type": "object",
@@ -15,12 +15,12 @@
           "type": "array",
           "items": {
             "type": "string",
-            "contentEncoding": "base64"
+            "contentEncoding": "base16"
           }
         },
         "chunks_root": {
           "type": "string",
-          "contentEncoding": "base64"
+          "contentEncoding": "base16"
         }
       },
       "additionalProperties": false
@@ -37,7 +37,7 @@
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "contentEncoding": "base64"
+                  "contentEncoding": "base16"
                 }
               }
             },
@@ -46,7 +46,7 @@
         },
         "segments_root": {
           "type": "string",
-          "contentEncoding": "base64"
+          "contentEncoding": "base16"
         }
       },
       "additionalProperties": false
@@ -58,12 +58,12 @@
           "type": "array",
           "items": {
             "type": "string",
-            "contentEncoding": "base64"
+            "contentEncoding": "base16"
           }
         },
         "segments_root": {
           "type": "string",
-          "contentEncoding": "base64"
+          "contentEncoding": "base16"
         }
       },
       "additionalProperties": false

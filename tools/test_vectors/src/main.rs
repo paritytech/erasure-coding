@@ -13,11 +13,7 @@ use segment_proof::{
 	MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE,
 };
 use serde::{Deserialize, Serialize};
-use serde_with::{
-	base64::{Base64, Standard},
-	formats::Padded,
-	serde_as,
-};
+use serde_with::serde_as;
 use std::{
 	fs::File,
 	path::{Path, PathBuf},
@@ -65,7 +61,7 @@ fn main() {
 #[serde_as]
 #[derive(Deserialize, Serialize, Default)]
 struct Vector {
-	#[serde_as(as = "Base64<Standard, Padded>")]
+  #[serde_as(as = "serde_with::hex::Hex")]
 	data: Vec<u8>,
 	work_package: Package,
 	segment: Segments,
@@ -77,21 +73,21 @@ struct Vector {
 struct Package {
 	// chunks by index (firsts are split package, size of chunk from vec).
 	chunks: Vec<Bytes>,
-	#[serde_as(as = "Base64<Standard, Padded>")]
+  #[serde_as(as = "serde_with::hex::Hex")]
 	// chunks merkle root
 	chunks_root: [u8; 32],
 }
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Default, PartialEq, Eq, Debug)]
-struct Bytes(#[serde_as(as = "Base64<Standard, Padded>")] Vec<u8>);
+struct Bytes(#[serde_as(as = "serde_with::hex::Hex")] Vec<u8>);
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Default)]
 struct Segments {
 	// Segments by index.
 	segments: Vec<Segment>,
-	#[serde_as(as = "Base64<Standard, Padded>")]
+  #[serde_as(as = "serde_with::hex::Hex")]
 	segments_root: [u8; 32],
 }
 
@@ -103,19 +99,19 @@ struct Segment {
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Default, Debug)]
-struct SubChunk(#[serde_as(as = "Base64<Standard, Padded>")] [u8; 12]);
+struct SubChunk(#[serde_as(as = "serde_with::hex::Hex")] [u8; 12]);
 
 #[serde_as]
 #[derive(Deserialize, Serialize, Default, PartialEq, Eq, Debug)]
 struct PageProofs {
 	page_proofs: Vec<Bytes>,
-	#[serde_as(as = "Base64<Standard, Padded>")]
+  #[serde_as(as = "serde_with::hex::Hex")]
 	segments_root: [u8; 32],
 }
 
 //#[serde_as]
 //#[derive(Deserialize, Serialize, Default, Debug)]
-//struct SerHash(#[serde_as(as = "Base64<Standard, Padded>")] [u8; 32]);
+//struct SerHash(#[serde_as(as = "serde_with::hex::Hex")] [u8; 32]);
 
 fn build_vector(size_index: usize) {
 	let package_size: usize = PACKAGE_SIZES[size_index];
