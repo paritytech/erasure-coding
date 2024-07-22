@@ -17,19 +17,22 @@ use std::{
 /// Fix segment size.
 pub const SEGMENT_SIZE: usize = 4096;
 
+/// Size of data for a point.
+pub const POINT_DATA_SIZE: usize = N_SHARDS * POINT_SIZE; // 684
+
 const SUBSHARD_PER_SEGMENT: usize = ((SEGMENT_SIZE - 1) / SUBSHARD_SIZE) + 1;
 
 /// Segment size with added padding to allow being
 /// erasure coded in batch while staying on same points indexes.
 const SEGMENT_SIZE_ALIGNED: usize = SUBSHARD_PER_SEGMENT * SUBSHARD_SIZE; // 4104 byte
 
-/// Fix number of shards and subshards.
+/// Fix number of subshards.
 pub const N_SHARDS: usize = 342;
 
 /// The number of time the erasure coded shards we want.
 pub const N_REDUNDANCY: usize = 2;
 
-/// The total number of shards, both original and ec one.
+/// The total number of subshards, both original and ec one.
 pub const TOTAL_SHARDS: usize = (1 + N_REDUNDANCY) * N_SHARDS;
 
 /// The reed-solomon library requires each shards to be 64 bytes aligned.
@@ -50,10 +53,6 @@ pub const SUBSHARD_SIZE: usize = POINT_SIZE * SUBSHARD_POINTS; // 12bytes
 /// Aligned number of full shard to process subshard.
 const SUBSHARD_BATCH_MUL: usize = 3; // 3 * 12 is aligned with 64
 
-/// Number of segments in a aligned batch.
-const SEGMENTS_PER_SUBSHARD_BATCH_OPTIMAL: usize =
-	SUBSHARD_BATCH_MUL * SHARD_MIN_SIZE / SUBSHARD_SIZE; // 16
-
 const BATCH_SHARD_SIZE: usize = SUBSHARD_BATCH_MUL * SHARD_MIN_SIZE; // 192
 
 const SUBSHARD_BATCH_MUL1: usize = SHARD_MIN_SIZE / SUBSHARD_SIZE; // 64 / 12, only 5
@@ -68,6 +67,12 @@ const BATCH_SHARD_SIZE_2: usize = 2 * SHARD_MIN_SIZE; // 192
 pub struct Segment {
 	/// Fix size chunk of data.
 	pub data: Box<[u8; SEGMENT_SIZE]>,
+}
+
+impl AsRef<[u8; SEGMENT_SIZE]> for Segment {
+	fn as_ref(&self) -> &[u8; SEGMENT_SIZE] {
+		self.data.as_ref()
+	}
 }
 
 /// Subshard (points in sequential orders).
@@ -255,8 +260,6 @@ impl AsRef<[u8]> for SegmentChunks {
 	}
 }
 
-#[derive(Encode, Decode, Clone, Debug, PartialEq, Eq)]
-pub struct SegmentMessage([u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE]);
 impl SegmentChunks {
 	pub fn empty() -> Self {
 		Self([0u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE])
@@ -304,6 +307,7 @@ impl SegmentChunks {
 /// Subshard uses some temp memory, so these should be used multiple time instead of allocating.
 pub struct SubShardEncoder {
 	encoder: reed_solomon::ReedSolomonEncoder,
+	// keep trace at current encoder `shard_bytes` configuration.
 	last_shard_size: usize,
 }
 
@@ -324,15 +328,30 @@ impl SubShardEncoder {
 		&mut self,
 		segments: &[Segment],
 	) -> Result<Vec<Box<[SubShard; TOTAL_SHARDS]>>, Error> {
-		let mut result = vec![Box::new([[0u8; SUBSHARD_SIZE]; TOTAL_SHARDS]); segments.len()];
+		self.construct_subshards::<SEGMENT_SIZE, SUBSHARD_SIZE, Segment>(segments) 
+	}
 
-		let mut seg_offset = 0;
+	/// Construct erasure-coded chunks.
+	pub fn construct_subshards<const S: usize, const OS: usize, I: AsRef<[u8; S]>>(
+		&mut self,
+		inputs: &[I],
+	) -> Result<Vec<Box<[[u8; OS]; TOTAL_SHARDS]>>, Error> {
+		let output_points = ((S - 1) / POINT_DATA_SIZE) + 1;
+		debug_assert!(OS == output_points * POINT_SIZE); 
+
+		let mut result = vec![Box::new([[0u8; OS]; TOTAL_SHARDS]); inputs.len()];
+
+		let mut input_offset = 0;
+		// Note that this could be of different size to fit
+	  // better other input size: currently using something
+	  // in line with segment size.
 		let mut shard = [0u8; BATCH_SHARD_SIZE];
-		for segments in segments.chunks(SEGMENTS_PER_SUBSHARD_BATCH_OPTIMAL) {
-			let s = if segments.len() <= SUBSHARD_BATCH_MUL1 {
+		let batch_size = BATCH_SHARD_SIZE / OS;
+		for inputs in inputs.chunks(batch_size) {
+			let s = if inputs.len() <= SHARD_MIN_SIZE / OS {
 				// 1 *
 				BATCH_SHARD_SIZE_1
-			} else if segments.len() <= SUBSHARD_BATCH_MUL2 {
+			} else if inputs.len() <= (SHARD_MIN_SIZE * 2) / OS {
 				// 2 *
 				BATCH_SHARD_SIZE_2
 			} else {
@@ -346,18 +365,18 @@ impl SubShardEncoder {
 
 			for shard_a in 0..N_SHARDS {
 				let mut shard_i = 0;
-				for segment_i in 0..segments.len() {
-					for point_i in 0..SUBSHARD_POINTS {
+				for segment_i in 0..inputs.len() {
+					for point_i in 0..output_points {
 						let data_i = (point_i * N_SHARDS) * 2 + shard_a * 2;
 						let point = if data_i < SEGMENT_SIZE {
-							(segments[segment_i].data[data_i], segments[segment_i].data[data_i + 1])
+							(inputs[segment_i].as_ref()[data_i], inputs[segment_i].as_ref()[data_i + 1])
 						} else {
 							(0, 0)
 						};
 						shard[shard_i] = point.0;
 						shard[shard_i + POINT_BYTE_SPACING] = point.1;
-						result[seg_offset + segment_i][shard_a][point_i * 2] = point.0;
-						result[seg_offset + segment_i][shard_a][point_i * 2 + 1] = point.1;
+						result[input_offset + segment_i][shard_a][point_i * 2] = point.0;
+						result[input_offset + segment_i][shard_a][point_i * 2 + 1] = point.1;
 						shard_i += 1;
 						if shard_i % POINT_BYTE_SPACING == 0 {
 							shard_i += POINT_BYTE_SPACING;
@@ -372,23 +391,23 @@ impl SubShardEncoder {
 				let mut segment_i = 0;
 				let mut data_i = 0;
 				while data_i != data.len() {
-					for point_i in 0..SUBSHARD_POINTS {
+					for point_i in 0..output_points {
 						let point = (data[data_i], data[data_i + 32]);
 						data_i += 1;
 						if data_i % POINT_BYTE_SPACING == 0 {
 							data_i += POINT_BYTE_SPACING;
 						}
-						result[seg_offset + segment_i][shard_a + N_SHARDS][point_i * 2] = point.0;
-						result[seg_offset + segment_i][shard_a + N_SHARDS][point_i * 2 + 1] =
+						result[input_offset + segment_i][shard_a + N_SHARDS][point_i * 2] = point.0;
+						result[input_offset + segment_i][shard_a + N_SHARDS][point_i * 2 + 1] =
 							point.1;
 					}
 					segment_i += 1;
-					if segment_i == segments.len() {
+					if segment_i == inputs.len() {
 						break;
 					}
 				}
 			}
-			seg_offset += SEGMENTS_PER_SUBSHARD_BATCH_OPTIMAL;
+			input_offset += batch_size;
 		}
 		Ok(result)
 	}
