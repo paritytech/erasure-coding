@@ -344,7 +344,7 @@ fn check_package_vector(path: &Path, schema: Option<&JSONSchema>) {
 		assert_eq!(r.1, 1);
 		assert_eq!(r.0.len(), 1);
 		assert_eq!(r.0[0].0, seg_index as u8);
-		assert_eq!(r.0[0].1, segments_chunks[seg_index]);
+		assert_eq!(r.0[0].1, segments_chunks[seg_index].data);
 	}
 
 	let mut dest = PageProofs::default();

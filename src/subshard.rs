@@ -20,12 +20,6 @@ pub const SEGMENT_SIZE: usize = 4096;
 /// Size of data for a point.
 pub const POINT_DATA_SIZE: usize = N_SHARDS * POINT_SIZE; // 684
 
-const SUBSHARD_PER_SEGMENT: usize = ((SEGMENT_SIZE - 1) / SUBSHARD_SIZE) + 1;
-
-/// Segment size with added padding to allow being
-/// erasure coded in batch while staying on same points indexes.
-const SEGMENT_SIZE_ALIGNED: usize = SUBSHARD_PER_SEGMENT * SUBSHARD_SIZE; // 4104 byte
-
 /// Fix number of subshards.
 pub const N_SHARDS: usize = 342;
 
@@ -55,10 +49,8 @@ const SUBSHARD_BATCH_MUL: usize = 3; // 3 * 12 is aligned with 64
 
 const BATCH_SHARD_SIZE: usize = SUBSHARD_BATCH_MUL * SHARD_MIN_SIZE; // 192
 
-const SUBSHARD_BATCH_MUL1: usize = SHARD_MIN_SIZE / SUBSHARD_SIZE; // 64 / 12, only 5
-const BATCH_SHARD_SIZE_1: usize = SHARD_MIN_SIZE; // 192
-const SUBSHARD_BATCH_MUL2: usize = (SHARD_MIN_SIZE * 2) / SUBSHARD_SIZE; // 128 / 12, only 10
-const BATCH_SHARD_SIZE_2: usize = 2 * SHARD_MIN_SIZE; // 192
+const BATCH_SHARD_SIZE_1: usize = SHARD_MIN_SIZE; // 64
+const BATCH_SHARD_SIZE_2: usize = 2 * SHARD_MIN_SIZE; // 128
 
 /// Fix size segment of a larger data.
 /// Data is padded when unaligned with
@@ -72,6 +64,12 @@ pub struct Segment {
 impl AsRef<[u8; SEGMENT_SIZE]> for Segment {
 	fn as_ref(&self) -> &[u8; SEGMENT_SIZE] {
 		self.data.as_ref()
+	}
+}
+
+impl From<Box<[u8; SEGMENT_SIZE]>> for Segment {
+	fn from(data: Box<[u8; SEGMENT_SIZE]>) -> Self {
+		Self { data }
 	}
 }
 
@@ -418,6 +416,7 @@ pub struct SubShardDecoder {
 	decoder: reed_solomon::ReedSolomonDecoder,
 	// cannot access ori shards from decoder, copying them here.
 	shards_ori: [[u8; BATCH_SHARD_SIZE]; N_SHARDS],
+	// keep trace at current decoder `shard_bytes` configuration.
 	last_shard_size: usize,
 }
 
@@ -450,47 +449,71 @@ impl SubShardDecoder {
 	pub fn reconstruct<I>(
 		&mut self,
 		subshards: &mut I,
-	) -> Result<(Vec<(u8, Segment)>, usize), Error>
+	) -> Result<(Vec<(u8, Box<[u8; SEGMENT_SIZE]>)>, usize), Error>
 	where
 		I: Iterator<Item = (u8, ChunkIndex, SubShard)>,
 	{
+		self.reconstruct_subshards::<SEGMENT_SIZE, SUBSHARD_SIZE, I>(subshards)
+	}
+
+	// u8 is the segment number.
+	pub fn reconstruct_subshards<const S: usize, const OS: usize, I>(
+		&mut self,
+		subshards: &mut I,
+	) -> Result<(Vec<(u8, Box<[u8; S]>)>, usize), Error>
+	where
+		I: Iterator<Item = (u8, ChunkIndex, [u8; OS])>,
+	{
+		let output_points = ((S - 1) / POINT_DATA_SIZE) + 1;
+		let s_aligned = output_points * POINT_DATA_SIZE;
+		debug_assert!(OS == output_points * POINT_SIZE); 
+		let max_segment_batch = BATCH_SHARD_SIZE / (output_points * POINT_SIZE);
+
 		let mut ori = vec![Vec::new(); TOTAL_SHARDS];
-		let mut segments = BTreeMap::<u8, usize>::new();
+		let mut inputs = BTreeMap::<u8, usize>::new();
 		let mut nb_decode = 0;
 
 		// TODO processed and run_segments could be skiped if we are sure to get
 		// correct number of chunks all for the same given chunk ix and segments.
 		for (segment, chunk_index, chunk) in subshards {
 			ori[chunk_index.0 as usize].push((segment, chunk));
-			*segments.entry(segment).or_default() += 1;
+			*inputs.entry(segment).or_default() += 1;
+		}
+
+		for chunks in ori.iter_mut() {
+			chunks.sort_by_key(|c| c.0);
 		}
 
 		// make batches of segments
 		let mut segment_batches = Vec::new();
 
-		let mut processed_segments = BTreeSet::new();
-		let mut nb_segments = 0;
-		for (segment, c) in segments.iter() {
+		let mut done_input = BTreeSet::new();
+		let mut inputs_to_process = 0;
+		for (segment, c) in inputs.iter() {
 			if *c >= N_SHARDS {
-				nb_segments += 1;
+				inputs_to_process += 1;
 			} else {
-				processed_segments.insert(*segment);
+				done_input.insert(*segment);
 			}
 		}
-		while nb_segments > 0 {
+		while inputs_to_process > 0 {
 			// count all segments written, and stop at first segment having enough.
-			let mut run_segments = BTreeMap::new();
+			let mut run_inputs = BTreeMap::new();
 			let mut ok = false;
 			for chunks in ori.iter() {
-				let first = run_segments.is_empty();
-				for (segment_i, _chunk) in chunks {
-					if !processed_segments.contains(segment_i) {
+				let first = run_inputs.is_empty();
+				for (input_i, _chunk) in chunks {
+					if !done_input.contains(input_i) {
 						if first {
-							if !processed_segments.contains(segment_i) {
-								run_segments.insert(*segment_i, 1);
+							if !done_input.contains(input_i) {
+								// add all input index contained in first non processed
+								// distributed index.
+								run_inputs.insert(*input_i, 1);
 							}
-						} else if let Some(c) = run_segments.get_mut(segment_i) {
+						} else if let Some(c) = run_inputs.get_mut(input_i) {
 							*c += 1;
+							// Note this is far from optimal: we stop at first with enough shard
+							// when we should try to have as many as possible with identical shards.
 							if *c == N_SHARDS {
 								ok = true;
 							}
@@ -502,45 +525,41 @@ impl SubShardDecoder {
 				}
 			}
 			if !ok {
-				if run_segments.is_empty() {
+				if run_inputs.is_empty() {
 					// should not happen
 					break;
 				}
-				for (seg, _count) in run_segments.into_iter() {
-					processed_segments.insert(seg);
+				for (seg, _count) in run_inputs.into_iter() {
+					done_input.insert(seg);
 				}
 				continue;
 			}
-			// TODO max size 16, rather [;16] lookup?
 			let mut segment_batch = BTreeSet::new();
-			for (seg, count) in run_segments.into_iter() {
+			for (seg, count) in run_inputs.into_iter() {
 				if count == N_SHARDS {
-					processed_segments.insert(seg);
+					done_input.insert(seg);
 					segment_batch.insert(seg);
-					if segment_batch.len() == 16 {
+					if segment_batch.len() == max_segment_batch {
+						inputs_to_process -= segment_batch.len();
 						segment_batches.push(segment_batch);
 						segment_batch = Default::default();
 					}
 				}
 			}
 			if !segment_batch.is_empty() {
-				nb_segments -= segment_batch.len();
+				inputs_to_process -= segment_batch.len();
 				segment_batches.push(segment_batch);
 			}
-		}
-
-		for chunks in ori.iter_mut() {
-			chunks.sort_by_key(|c| c.0);
 		}
 
 		let mut result2 = Vec::new();
 		// Note that sometime byte could stay set to non zero value, but it does not matter.
 		let mut shard_buff = [0u8; BATCH_SHARD_SIZE];
 		for segments in segment_batches {
-			let s = if segments.len() <= SUBSHARD_BATCH_MUL1 {
+			let s = if segments.len() <= SHARD_MIN_SIZE / OS {
 				// 1 *
 				BATCH_SHARD_SIZE_1
-			} else if segments.len() <= SUBSHARD_BATCH_MUL2 {
+			} else if segments.len() <= (SHARD_MIN_SIZE * 2) / OS {
 				// 2 *
 				BATCH_SHARD_SIZE_2
 			} else {
@@ -566,11 +585,12 @@ impl SubShardDecoder {
 					&mut shard_buff
 				};
 				for (segment_i, chunk) in chunks {
+					// Note we could feed segments with the info in the first place to avoid this scan.
 					if segments.contains(segment_i) {
-						let shard_i_s = nb * SUBSHARD_SIZE / SHARD_MIN_SIZE;
-						let shard_i_r = nb * SUBSHARD_SIZE % SHARD_MIN_SIZE;
+						let shard_i_s = nb * OS / SHARD_MIN_SIZE;
+						let shard_i_r = nb * OS % SHARD_MIN_SIZE;
 						let mut shard_i = shard_i_s * SHARD_MIN_SIZE + shard_i_r / POINT_SIZE;
-						for point_i in 0..SUBSHARD_POINTS {
+						for point_i in 0..output_points {
 							shard[shard_i] = chunk[point_i * POINT_SIZE];
 							shard[shard_i + POINT_BYTE_SPACING] = chunk[(point_i * POINT_SIZE) + 1];
 							shard_i += 1;
@@ -606,10 +626,10 @@ impl SubShardDecoder {
 			}
 			debug_assert_eq!(ori_map.len(), N_SHARDS);
 			for (i, segment) in segments.iter().enumerate() {
-				let chunk_start = i * SEGMENT_SIZE_ALIGNED;
-				let original = ori_chunk_to_data(&ori_map, chunk_start, Some(SEGMENT_SIZE))
+				let chunk_start = i * s_aligned;
+				let original = ori_chunk_to_data::<S>(&ori_map, chunk_start, Some(SEGMENT_SIZE))
 					.expect("number of segments checked");
-				result2.push((*segment, Segment { data: Box::new(original) }));
+				result2.push((*segment, Box::new(original)));
 			}
 		}
 
@@ -617,12 +637,12 @@ impl SubShardDecoder {
 	}
 }
 
-fn ori_chunk_to_data(
+fn ori_chunk_to_data<const IS: usize>(
 	shards: &BTreeMap<usize, &[u8]>,
 	start_data: usize,
 	data_len: Option<usize>,
-) -> Option<[u8; 4096]> {
-	let mut data = [0u8; 4096];
+) -> Option<[u8; IS]> {
+	let mut data = [0u8; IS];
 
 	let mut i_data = 0;
 	let (mut full_i, mut shard_i, mut shard_a) = data_index_to_chunk_index(start_data);
@@ -647,7 +667,6 @@ fn ori_chunk_to_data(
 				if full_i == SUBSHARD_BATCH_MUL {
 					break;
 				}
-
 				shard_i_offset = full_i * SHARD_MIN_SIZE;
 			}
 			shard_a = 0;
@@ -712,7 +731,7 @@ mod tests {
 				);
 			let (s, i) = decoder.reconstruct(&mut it).unwrap();
 			assert_eq!(i, 1);
-			assert_eq!((i_seg as u8, segments[i_seg].clone()), s[0]);
+			assert_eq!((i_seg as u8, segments[i_seg].data.clone()), s[0]);
 		}
 
 		// try batching 2 subchunk
@@ -757,8 +776,8 @@ mod tests {
 
 		let (s, i) = decoder.reconstruct(&mut it1.chain(it2)).unwrap();
 		assert_eq!(i, 1); // all chunk ix are aligned so can be processed at once.
-		assert_eq!((i_seg1 as u8, segments[i_seg1].clone()), s[0]);
-		assert_eq!((i_seg2 as u8, segments[i_seg2].clone()), s[1]);
+		assert_eq!((i_seg1 as u8, segments[i_seg1].data.clone()), s[0]);
+		assert_eq!((i_seg2 as u8, segments[i_seg2].data.clone()), s[1]);
 
 		let it1 = (chunks[i_seg1][0..N_SHARDS / 3])
 			.iter()
@@ -796,7 +815,7 @@ mod tests {
 			);
 		let (s, i) = decoder.reconstruct(&mut it1.chain(it3)).unwrap();
 		assert_eq!(i, 2); // not all chunk ix are aligned
-		assert_eq!((i_seg1 as u8, segments[i_seg1].clone()), s[0]);
-		assert_eq!((i_seg2 as u8, segments[i_seg2].clone()), s[1]);
+		assert_eq!((i_seg1 as u8, segments[i_seg1].data.clone()), s[0]);
+		assert_eq!((i_seg2 as u8, segments[i_seg2].data.clone()), s[1]);
 	}
 }
