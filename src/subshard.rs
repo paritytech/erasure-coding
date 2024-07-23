@@ -263,10 +263,10 @@ impl SegmentChunks {
 		Self([0u8; segment_proof::SEGMENT_CHUNKS_GROUP_SIZE])
 	}
 	pub fn has_chunk(&self, index_in_group: usize) -> bool {
-		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUP_SIZE {
+		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUPS {
 			return false;
 		}
-		let map_start = segment_proof::SEGMENT_CHUNKS_GROUP_SIZE * SUBSHARD_SIZE;
+		let map_start = segment_proof::SEGMENT_CHUNKS_GROUPS * SUBSHARD_SIZE;
 		let byte_at = index_in_group / 8;
 		let byte_ix = index_in_group % 8;
 		self.0[map_start + byte_at as usize] & 1u8 << byte_ix != 0
@@ -286,13 +286,13 @@ impl SegmentChunks {
 		if chunk.len() != SUBSHARD_SIZE {
 			return None;
 		}
-		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUP_SIZE {
+		if index_in_group >= segment_proof::SEGMENT_CHUNKS_GROUPS {
 			return None;
 		}
 		if self.has_chunk(index_in_group) {
 			return Some(false)
 		}
-		let map_start = segment_proof::SEGMENT_CHUNKS_GROUP_SIZE * SUBSHARD_SIZE;
+		let map_start = segment_proof::SEGMENT_CHUNKS_GROUPS * SUBSHARD_SIZE;
 		let byte_at = index_in_group / 8;
 		let byte_ix = index_in_group % 8;
 		self.0[map_start + byte_at as usize] |= 1u8 << byte_ix;
