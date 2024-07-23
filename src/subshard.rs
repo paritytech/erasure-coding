@@ -661,8 +661,10 @@ fn ori_chunk_to_data<const IS: usize>(
 		data[i_data] = l;
 		i_data += 1;
 		let r = s[shard_i_offset + shard_i + POINT_BYTE_SPACING];
-		data[i_data] = r;
-		i_data += 1;
+		if !(IS % 2 > 0 && i_data == IS) {
+			data[i_data] = r;
+			i_data += 1;
+		}
 		if data_len.map(|m| i_data >= m).unwrap_or(false) {
 			break;
 		}

@@ -76,7 +76,9 @@ fn main() {
 	.unwrap();
 	for path in paths {
 		let path = path.unwrap();
-		if path.file_name().to_str().unwrap().starts_with(PREFIX_SUBSHARD_EC) {}
+		if path.file_name().to_str().unwrap().starts_with(PREFIX_SUBSHARD_EC) {
+			check_ec(&path.path(), Some(&schema_subshard_ec));
+		}
 		if path.file_name().to_str().unwrap().starts_with(PREFIX_SEGMENT_EC) {
 			check_segment_ec(&path.path(), Some(&schema_segment_ec));
 		}
@@ -135,6 +137,13 @@ struct Ec<const S: usize, const OS: usize> {
 	#[serde_as(as = "serde_with::hex::Hex")]
 	data: [u8; S],
 	chunks: Vec<Array<OS>>,
+}
+
+#[serde_as]
+#[derive(Deserialize, Serialize)]
+struct EcVar {
+	data: Bytes,
+	chunks: Vec<Bytes>,
 }
 
 impl<const S: usize, const OS: usize> Default for Ec<S, OS> {
@@ -479,6 +488,46 @@ fn check_segment_root(path: &Path, schema: Option<&JSONSchema>) {
 		assert_eq!(r, vector.data);
 	}
 }
+
+fn check_ec(path: &Path, schema: Option<&JSONSchema>) {
+	let vector: EcVar = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+	if let Some(schema) = schema {
+		assert!(schema.is_valid(&serde_json::to_value(&vector).unwrap()));
+	}
+	let package_size = vector.data.0.len();
+
+	match package_size {
+		1 => check_ec_internal::<1, 2>(path),
+		684 => check_ec_internal::<684, 2>(path),
+		1368 => check_ec_internal::<{ 684 * 2 }, { 2 * 2 }>(path),
+		2052 => check_ec_internal::<{ 684 * 3 }, { 2 * 3 }>(path),
+		4096 => check_ec_internal::<4096, { 2 * 6 }>(path),
+		4104 => check_ec_internal::<{ 684 * 6 }, { 2 * 6 }>(path),
+		_ => unimplemented!("undefined ec size"),
+	}
+}
+
+fn check_ec_internal<const S: usize, const OS: usize>(path: &Path) {
+	let ec: Ec<S, OS> = serde_json::from_reader(File::open(path).unwrap()).unwrap();
+	let mut decoder = erasure_coding::SubShardDecoder::new().unwrap();
+	// not running segments in parallel (could be but simpler code here)
+	let r = decoder
+		.reconstruct_subshards(
+			&mut ec
+				.chunks
+				.iter()
+				.enumerate()
+				.filter(|(i, _)| in_range(*i, true)) // TODO should use random 342 chunks or different
+				// subsets
+				.map(|(i, c)| (0, ChunkIndex(i as u16), c.0)),
+		)
+		.unwrap();
+	assert_eq!(r.1, 1);
+	assert_eq!(r.0.len(), 1);
+	assert_eq!(r.0[0].0, 0);
+	assert_eq!(*r.0[0].1, ec.data);
+}
+
 // mix half ori half first reco
 fn in_range(i: usize, sub_chunks: bool) -> bool {
 	let n_chunks = if sub_chunks { N_SUBCHUNKS } else { N_CHUNKS as usize };
