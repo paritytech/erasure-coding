@@ -189,7 +189,7 @@ struct PageProofs {
 
 fn build_ec<const S: usize, const OS: usize>() {
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{}", PREFIX_SUBSHARD_EC, S);
+	let file_name: String = format!("{}_{}.json", PREFIX_SUBSHARD_EC, S);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", S, file_name);
@@ -213,7 +213,7 @@ fn build_ec<const S: usize, const OS: usize>() {
 
 fn build_segment_ec(package_size: usize) {
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{}", PREFIX_SEGMENT_EC, package_size);
+	let file_name: String = format!("{}_{}.json", PREFIX_SEGMENT_EC, package_size);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
@@ -245,7 +245,7 @@ fn build_segment_ec(package_size: usize) {
 
 fn build_segments_root(package_size: usize) {
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{}", PREFIX_SEGMENT_ROOT, package_size);
+	let file_name: String = format!("{}_{}.json", PREFIX_SEGMENT_ROOT, package_size);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
@@ -275,7 +275,7 @@ fn build_segments_root(package_size: usize) {
 
 fn build_page_proofs_vec(package_size: usize) {
 	let mut file_path: PathBuf = VECS_LOCATION.into();
-	let file_name: String = format!("{}_{}", PREFIX_PAGEPROOF, package_size);
+	let file_name: String = format!("{}_{}.json", PREFIX_PAGEPROOF, package_size);
 	file_path.push(&file_name);
 	if file_path.exists() {
 		std::println!("Skipping size {}, file {} exists already", package_size, file_name);
