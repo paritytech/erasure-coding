@@ -3,8 +3,9 @@
 //! (no error handling constant parameter definition).
 
 use erasure_coding::{
-	construct_chunks, segment_proof, ChunkIndex, IncompleteSegments, MerklizedChunks, PageProof,
-	SEGMENT_SIZE,
+	construct_chunks,
+	segment_proof::{self, PageProofIndex},
+	ChunkIndex, IncompleteSegments, MerklizedChunks, PageProof, SEGMENT_SIZE,
 };
 use jsonschema::JSONSchema;
 //use rand::{rngs::SmallRng, RngCore, SeedableRng};
@@ -382,18 +383,26 @@ fn build_segment_root(into: &mut PageProofs) {
 
 		let mut encoded_page = [0u8; 4096];
 		encoded_page[0..2048].copy_from_slice(&page[..]);
-		let proof = segment_proof.page_proof_proof(&mut proof_buf, i as u16);
+		let page_proof_index = PageProofIndex(i as u16);
+		let proof = segment_proof.page_proof_proof(&mut proof_buf, page_proof_index);
 		let mut enc_at = 2048;
 		for p in proof {
 			encoded_page[enc_at..enc_at + 32].copy_from_slice(p);
 			enc_at += 32;
 		}
-		let pp = PageProof { index: i as u16, parent_proof: &segment_proof };
+		let pp = PageProof { index: page_proof_index, parent_proof: &segment_proof };
 		let mut other = [0u8; 4096];
 		pp.encoded(&mut other);
 		assert_eq!(&encoded_page, &other);
-		assert_eq!(check_build.insert_page_proof_hashes(&encoded_page, i as u16), Some(true));
-		assert!(segment_proof.check_page_proof_root(&mut proof_buf, i as u16, subtree_root.root()));
+		assert_eq!(
+			check_build.insert_page_proof_hashes(&encoded_page, page_proof_index),
+			Some(true)
+		);
+		assert!(segment_proof.check_page_proof_root(
+			&mut proof_buf,
+			page_proof_index,
+			subtree_root.root()
+		));
 		into.page_proofs.push(Bytes(encoded_page.to_vec()));
 	}
 	assert_eq!(check_build.nb_page_proof(), nb_page);
