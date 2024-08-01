@@ -4,8 +4,9 @@
 //! best case.
 
 use segment_proof::{
-	Layout, MerklizedSegments, SegmentIndex, MAX_NB_SEGMENTS, MAX_SEGMENT_PROOF_LEN,
-	PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE, PAGE_PROOF_SEGMENT_SIZE,
+	Layout, MerklizedSegments, PageProofIndex, SegmentIndex, MAX_NB_SEGMENTS,
+	MAX_SEGMENT_PROOF_LEN, PAGE_PROOF_SEGMENT_HASHES, PAGE_PROOF_SEGMENT_HASHES_SIZE,
+	PAGE_PROOF_SEGMENT_SIZE,
 };
 
 use super::*;
@@ -110,8 +111,8 @@ impl IncompleteSegments {
 	) -> Option<bool> {
 		let pp_at = at.page_proof_index();
 
-		let byte_at = pp_at / 8;
-		let byte_ix = pp_at % 8;
+		let byte_at = pp_at.0 / 8;
+		let byte_ix = pp_at.0 % 8;
 		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix == 0 {
 			return None
 		}
@@ -142,9 +143,9 @@ impl IncompleteSegments {
 		self.inserted_page_proof
 	}
 
-	pub fn page_proof(&self, at: u16) -> Option<PageProof> {
-		let byte_at = at / 8;
-		let byte_ix = at % 8;
+	pub fn page_proof(&self, at: PageProofIndex) -> Option<PageProof> {
+		let byte_at = at.0 / 8;
+		let byte_ix = at.0 % 8;
 		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix == 0 {
 			None
 		} else {
@@ -153,9 +154,9 @@ impl IncompleteSegments {
 	}
 
 	// at being page proof index (first segment index of page / 64).
-	pub fn insert_page_proof_hashes(&mut self, encoded: &[u8], at: u16) -> Option<bool> {
-		let byte_at = at / 8;
-		let byte_ix = at % 8;
+	pub fn insert_page_proof_hashes(&mut self, encoded: &[u8], at: PageProofIndex) -> Option<bool> {
+		let byte_at = at.0 / 8;
+		let byte_ix = at.0 % 8;
 
 		if self.presence_page_proof[byte_at as usize] & 1u8 << byte_ix != 0 {
 			// already present, do not check
@@ -167,8 +168,8 @@ impl IncompleteSegments {
 		}
 
 		let mut nb_hash = PAGE_PROOF_SEGMENT_HASHES;
-		// check for single page. TODO from jam may be able to pass a parameter
-		if at == 0 {
+		// check for single page. TODO from jam may be able to pass len as a parameter
+		if at.0 == 0 {
 			for (i, h) in encoded[0..PAGE_PROOF_SEGMENT_HASHES_SIZE].chunks(32).enumerate() {
 				if h == &[0u8; 32][..] {
 					nb_hash = i;
@@ -219,14 +220,14 @@ impl IncompleteSegments {
 // TODO could have fix size buf in inner Merklized segments.
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct PageProof<'a> {
-	pub index: u16,
+	pub index: PageProofIndex,
 	pub parent_proof: &'a MerklizedSegments,
 }
 
 impl<'a> PageProof<'a> {
 	pub fn encoded(&self, buff: &mut [u8; PAGE_PROOF_SEGMENT_SIZE]) {
 		let pp = &self.parent_proof.page_proof().0
-			[self.index as usize * PAGE_PROOF_SEGMENT_HASHES * 32..];
+			[self.index.0 as usize * PAGE_PROOF_SEGMENT_HASHES * 32..];
 		let size = std::cmp::min(pp.len(), PAGE_PROOF_SEGMENT_HASHES_SIZE);
 		buff[0..size].copy_from_slice(&pp[..size]);
 		for i in size..PAGE_PROOF_SEGMENT_HASHES_SIZE {

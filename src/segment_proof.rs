@@ -1,5 +1,7 @@
 //! Page proof for a sequence of segment, and other segment related constant.
 
+use std::ops::{AddAssign, RemAssign};
+
 use crate::SEGMENT_SIZE;
 pub use blake2b_simd::State as InnerHasher;
 use scale::{Decode, Encode};
@@ -9,12 +11,55 @@ fn hash_fn(data: &[u8]) -> blake2b_simd::Hash {
 }
 
 const HASH_LEN: usize = 32;
-type ErasureHash = [u8; HASH_LEN];
+type MerkleHash = [u8; HASH_LEN];
+
+#[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Encode, Decode, Hash, Debug)]
 pub struct SegmentIndex(pub u16);
 
+#[derive(Eq, Ord, PartialEq, PartialOrd, Copy, Clone, Encode, Decode, Hash, Debug)]
+pub struct PageProofIndex(pub u16);
+
 impl SegmentIndex {
-	pub fn page_proof_index(&self) -> u16 {
-		self.0 / PAGE_PROOF_SEGMENT_HASHES as u16
+	pub fn page_proof_index(&self) -> PageProofIndex {
+		PageProofIndex(self.0 / PAGE_PROOF_SEGMENT_HASHES as u16)
+	}
+}
+
+impl From<u16> for SegmentIndex {
+	fn from(i: u16) -> Self {
+		Self(i)
+	}
+}
+
+impl From<u16> for PageProofIndex {
+	fn from(i: u16) -> Self {
+		Self(i)
+	}
+}
+
+impl RemAssign<u16> for PageProofIndex {
+	fn rem_assign(&mut self, rhs: u16) {
+		self.0 -= rhs
+	}
+}
+
+impl std::ops::Rem<u16> for PageProofIndex {
+	type Output = Self;
+	fn rem(self, rhs: u16) -> Self {
+		Self(self.0 - rhs)
+	}
+}
+
+impl std::ops::Div<u16> for PageProofIndex {
+	type Output = Self;
+	fn div(self, rhs: u16) -> Self {
+		Self(self.0 / rhs)
+	}
+}
+
+impl AddAssign<u16> for PageProofIndex {
+	fn add_assign(&mut self, rhs: u16) {
+		self.0 += rhs
 	}
 }
 
@@ -261,7 +306,12 @@ impl MerklizedSegments {
 		Self { tree, layout }
 	}
 
-	pub(crate) fn add_subtree(&mut self, at: u16, hashes: &[u8], parent_proof: &[&[u8]]) -> bool {
+	pub(crate) fn add_subtree(
+		&mut self,
+		at: PageProofIndex,
+		hashes: &[u8],
+		parent_proof: &[&[u8]],
+	) -> bool {
 		let single = parent_proof.is_empty();
 		let nb_hashes = hashes.len() / 32;
 		// this is implemented for align: hashes must be 2^n
@@ -291,7 +341,7 @@ impl MerklizedSegments {
 		};
 
 		let mut start = Layout::offset_depth_const(depth_parent - 1);
-		let mut offset = at as usize * 64;
+		let mut offset = at.0 as usize * PAGE_PROOF_SEGMENT_HASHES;
 		let start_l = (start + offset) * 32;
 		let end_l = start_l + hashes.len();
 		self.tree[start_l..end_l].copy_from_slice(hashes);
@@ -422,7 +472,7 @@ impl MerklizedSegments {
 
 	pub fn check_chunk(
 		&self,
-		root: &ErasureHash,
+		root: &MerkleHash,
 		chunk: &[u8; SEGMENT_SIZE],
 		chunk_index: SegmentIndex,
 	) -> bool {
@@ -433,12 +483,12 @@ impl MerklizedSegments {
 			return false;
 		}
 		let hash = hash_fn(chunk);
-		let mut h = ErasureHash::default();
+		let mut h = MerkleHash::default();
 		h.as_mut_slice().copy_from_slice(&hash.as_bytes()[..HASH_LEN]);
 		self.check_chunk_hash(&h, chunk_index)
 	}
 
-	fn check_chunk_hash(&self, chunk_hash: &ErasureHash, chunk_index: SegmentIndex) -> bool {
+	fn check_chunk_hash(&self, chunk_hash: &MerkleHash, chunk_index: SegmentIndex) -> bool {
 		let chunk_index = chunk_index.0 as usize;
 		let total_chunks = self.layout.total_leafs();
 		if chunk_index >= total_chunks {
@@ -451,7 +501,7 @@ impl MerklizedSegments {
 	pub fn page_proof_proof<'a, 'b>(
 		&'a self,
 		buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN],
-		at: u16,
+		at: PageProofIndex,
 	) -> &'b [&'a [u8]] {
 		let nb_page = (((self.layout.nb_leafs - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1) as u16;
 		let depth_proof = if nb_page < 2 {
@@ -461,7 +511,7 @@ impl MerklizedSegments {
 			16 - (nb_page - 1).leading_zeros() as usize
 		};
 
-		let field = Bitfield(at);
+		let field = Bitfield(at.0);
 		let mut level_index = 0; // skip root
 		for i in 0..depth_proof {
 			let mut sibling = Layout::offset_depth_const(i + 1) + level_index;
@@ -481,14 +531,19 @@ impl MerklizedSegments {
 	pub fn check_page_proof_root<'a, 'b>(
 		&'a self,
 		buffer: &'b mut [&'a [u8]; MAX_SEGMENT_PROOF_LEN],
-		at: u16,
+		at: PageProofIndex,
 		root: &[u8],
 	) -> bool {
 		let proof = self.page_proof_proof(buffer, at);
 		self.check_page_proof_proof(root, proof, at)
 	}
 
-	pub fn check_page_proof_proof(&self, page_proof_root: &[u8], proof: &[&[u8]], at: u16) -> bool {
+	pub fn check_page_proof_proof(
+		&self,
+		page_proof_root: &[u8],
+		proof: &[&[u8]],
+		at: PageProofIndex,
+	) -> bool {
 		let nb_page = (((self.layout.nb_leafs - 1) / PAGE_PROOF_SEGMENT_HASHES) + 1) as u16;
 		let depth_proof = if nb_page < 2 {
 			0
@@ -497,7 +552,7 @@ impl MerklizedSegments {
 			16 - (nb_page - 1).leading_zeros() as usize
 		};
 
-		let field = Bitfield(at);
+		let field = Bitfield(at.0);
 		let mut calc_root = page_proof_root;
 		let mut hash_buff1 = [0u8; 32];
 		hash_buff1.copy_from_slice(page_proof_root);
