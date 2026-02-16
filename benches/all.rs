@@ -2,13 +2,13 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use erasure_coding::*;
 use std::time::Duration;
 
-fn chunks(n_chunks: u16, pov: &[u8]) -> Vec<Vec<u8>> {
-	construct_chunks(n_chunks, pov).unwrap()
+fn chunks(n_chunks: u16, pov: &[u8], mode: &ThreadMode) -> Vec<Vec<u8>> {
+	construct_chunks(n_chunks, pov, mode).unwrap()
 }
 
-fn erasure_root(n_chunks: u16, pov: &[u8]) -> ErasureRoot {
-	let chunks = chunks(n_chunks, pov);
-	MerklizedChunks::compute(chunks).root()
+fn erasure_root(n_chunks: u16, pov: &[u8], mode: &ThreadMode) -> ErasureRoot {
+	let chunks = chunks(n_chunks, pov, mode);
+	MerklizedChunks::compute(chunks, mode).unwrap().root()
 }
 
 struct BenchParam {
@@ -28,17 +28,19 @@ fn bench_all(c: &mut Criterion) {
 	const POV_SIZES: [usize; 3] = [128 * KB, MB, 5 * MB];
 	const N_CHUNKS: [u16; 2] = [1023, 1024];
 
+	let mode_multi = ThreadMode::multi_with_num_threads(None).unwrap();
+
 	let mut group = c.benchmark_group("construct");
 	for pov_size in POV_SIZES {
 		for n_chunks in N_CHUNKS {
 			let param = BenchParam { pov_size, n_chunks };
 			let pov = vec![0xfe; pov_size];
-			let expected_root = erasure_root(n_chunks, &pov);
+			let expected_root = erasure_root(n_chunks, &pov, &mode_multi);
 
 			group.throughput(Throughput::Bytes(pov.len() as u64));
 			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, &n| {
 				b.iter(|| {
-					let root = erasure_root(n, &pov);
+					let root = erasure_root(n, &pov, &mode_multi);
 					assert_eq!(root, expected_root);
 				});
 			});
@@ -51,7 +53,7 @@ fn bench_all(c: &mut Criterion) {
 		for n_chunks in N_CHUNKS {
 			let param = BenchParam { pov_size, n_chunks };
 			let pov = vec![0xfe; pov_size];
-			let all_chunks = chunks(n_chunks, &pov);
+			let all_chunks = chunks(n_chunks, &pov, &mode_multi);
 
 			let chunks: Vec<_> = all_chunks
 				.into_iter()
@@ -64,7 +66,7 @@ fn bench_all(c: &mut Criterion) {
 			group.throughput(Throughput::Bytes(pov.len() as u64));
 			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, &n| {
 				b.iter(|| {
-					let _pov: Vec<u8> = reconstruct(n, chunks.clone(), pov.len()).unwrap();
+					let _pov: Vec<u8> = reconstruct(n, chunks.clone()).unwrap();
 				});
 			});
 		}
@@ -76,7 +78,7 @@ fn bench_all(c: &mut Criterion) {
 		for n_chunks in N_CHUNKS {
 			let param = BenchParam { pov_size, n_chunks };
 			let pov = vec![0xfe; pov_size];
-			let all_chunks = chunks(n_chunks, &pov);
+			let all_chunks = chunks(n_chunks, &pov, &mode_multi);
 
 			let chunks = all_chunks
 				.into_iter()
@@ -86,13 +88,12 @@ fn bench_all(c: &mut Criterion) {
 			group.throughput(Throughput::Bytes(pov.len() as u64));
 			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, &n| {
 				b.iter(|| {
-					let _pov: Vec<u8> = reconstruct_from_systematic(
-						n,
-						chunks.len(),
-						&mut chunks.iter().map(Vec::as_slice),
-						pov.len(),
-					)
-					.unwrap();
+				let _pov: Vec<u8> = reconstruct_from_systematic(
+					n,
+					chunks.len(),
+					&mut chunks.iter().map(Vec::as_slice),
+				)
+				.unwrap();
 				});
 			});
 		}
@@ -104,12 +105,13 @@ fn bench_all(c: &mut Criterion) {
 		for n_chunks in N_CHUNKS {
 			let param = BenchParam { pov_size, n_chunks };
 			let pov = vec![0xfe; pov_size];
-			let all_chunks = chunks(n_chunks, &pov);
+			let all_chunks = chunks(n_chunks, &pov, &mode_multi);
 
 			group.throughput(Throughput::Bytes(pov.len() as u64));
 			group.bench_with_input(BenchmarkId::from_parameter(param), &n_chunks, |b, _| {
 				b.iter(|| {
-					let iter = MerklizedChunks::compute(all_chunks.clone());
+					let iter = MerklizedChunks::compute(all_chunks.clone(), &mode_multi).unwrap();
+
 					let n = iter.collect::<Vec<_>>().len();
 					assert_eq!(n, all_chunks.len());
 				});
@@ -123,10 +125,12 @@ fn bench_all(c: &mut Criterion) {
 		for n_chunks in N_CHUNKS {
 			let param = BenchParam { pov_size, n_chunks };
 			let pov = vec![0xfe; pov_size];
-			let all_chunks = chunks(n_chunks, &pov);
-			let merkle = MerklizedChunks::compute(all_chunks);
+			let all_chunks = chunks(n_chunks, &pov, &mode_multi);
+
+			let merkle = MerklizedChunks::compute(all_chunks, &mode_multi).unwrap();
 			let root = merkle.root();
 			let chunks: Vec<_> = merkle.collect();
+
 			let chunk = chunks[n_chunks as usize / 2].clone();
 
 			group.throughput(Throughput::Bytes(pov.len() as u64));

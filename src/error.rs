@@ -26,6 +26,8 @@ pub enum Error {
 	Bug,
 	#[error("An unknown error has appeared when (re)constructing erasure code chunks")]
 	Unknown,
+	#[error("Invalid data length")]
+	InvalidDataLength,
 }
 
 impl From<reed_solomon::Error> for Error {

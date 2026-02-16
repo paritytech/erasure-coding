@@ -7,13 +7,14 @@ license = "Apache-2.0"
 [dependencies]
 blake2b_simd = { version = "1", default-features = false }
 bounded-collections = { version = "0.1.9", default-features = false }
-reed-solomon = { package = "reed-solomon-simd", git = "https://github.com/ordian/reed-solomon-simd", branch = "simd-feature", default-features = false }
+reed-solomon = { package = "reed-solomon-simd", version = "3.1.0" }
 scale = { package = "parity-scale-codec", version = "3.6.9", default-features = false,  features = ["derive"] }
 thiserror = { version = "1.0.56", default-features = false }
+rayon = { version = "1.8" }
+bumpalo = { version = "3.14", optional = true }
 
 [features]
-default = ["simd"]
-simd = ["reed-solomon/simd"]
+arena = ["bumpalo"]
 
 [profile.dev]
 panic = "abort"
