@@ -22,7 +22,7 @@ opt-level = 1
 [dev-dependencies]
 criterion = { version = "0.5.1", default-features = false, features = ["cargo_bench_support"] }
 quickcheck = { version = "1.0.3", default-features = false }
-rand = { version = "0.8.4", features = [ "small_rng"] }
+rand = { version = "0.9.3", features = [ "small_rng"] }
 
 [[bench]]
 name = "all"
